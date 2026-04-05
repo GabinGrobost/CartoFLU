@@ -1,4 +1,4 @@
-# CartoFLU 🦊📡
+# SAR+ based on CartoFLU 🦊📡
 
 **Application web de radiogoniométrie pour la recherche de balise**  
 Développée par F4FLU / Christophe Chalandre /· ADRASEC 25 (Doubs)
