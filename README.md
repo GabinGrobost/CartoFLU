@@ -1,7 +1,8 @@
 # SAR+ based on CartoFLU 🦊📡
 
 **Application web de radiogoniométrie pour la recherche de balise**  
-Développée par F4FLU / Christophe Chalandre /· ADRASEC 25 (Doubs)
+Développée par F4FLU / Christophe Chalandre /· ADRASEC 25 (Doubs) (CartoFLU Creator)
+Développée par SWL2506 / Gabin Grobost / ADRASEC 25 (Doubs) (SAR+ Developper)
 
 ---
 
