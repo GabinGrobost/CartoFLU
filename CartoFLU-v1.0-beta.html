@@ -35,6 +35,7 @@
 
   :root {
     --bg:       #343434;
+    --bg2:      #3d3d3d;
     --panel:    #474747;
     /*! --border:   #2a3f58; */
     --accent:   #fff;
@@ -520,7 +521,7 @@
   .sidebar {
     width: 320px;
     min-width: 320px;
-    background: var(--panel);
+    background: var(--bg2);
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
@@ -1182,7 +1183,7 @@
 
   /* Leaflet popup override */
   .leaflet-popup-content-wrapper {
-    background: var(--panel) !important;
+    background: var(--accent) !important;
     border: 1px solid var(--border) !important;
     border-radius: 6px !important;
     color: var(--text) !important;
@@ -1190,7 +1191,7 @@
     box-shadow: 0 4px 20px rgba(0,0,0,0.6) !important;
   }
 
-  .leaflet-popup-tip { background: var(--panel) !important; }
+  .leaflet-popup-tip { background: var(--accent) !important; }
 
   .popup-title {
     font-size: 15px;
@@ -1268,14 +1269,13 @@
 <body>
 
 <header>
-  <button id="sidebarToggleBtn" class="header-menu-btn" title="Afficher le menu latéral" onclick="toggleSidebar()">☰ MENU</button>
   <div class="logo">SAR<span>+</span></div>
   <div style="font-family:'Share Tech Mono',monospace;font-size:11px;letter-spacing:2px;color:var(--accent);white-space:nowrap;"><span style="color:var(--accent2);">S</span>earch <span style="color:var(--accent2);">A</span>nd <span style="color:var(--accent2);">R</span>escue <span style="color:var(--accent2);">+</span></div>
   <nav class="header-ops" aria-label="Menu des opérations">
     <button class="header-op-btn" type="button" onclick="openOperation()">Ouvrir une operation</button>
     <button class="header-op-btn" type="button" onclick="joinOperation()">Rejoindre une operation</button>
-    <button class="header-op-btn" type="button" onclick="customOperationAction()">Bouton a definir</button>
-    <button class="header-op-btn" type="button" onclick="customOperationAction()">+</button>
+    <button class="header-op-btn" type="button" onclick="customOperationAction()">Action manuelle</button>
+    <button class="header-op-btn" type="button" onclick="toggleReleveTab()">+</button>
   </nav>
   <!-- APPEL STATIONS -->
   <div class="rollcall-btn">
@@ -1350,12 +1350,9 @@
           <div class="form-group">
             <label>Indicatif</label>
             <div class="cs-wrap">
-              <datalist id="stationList"></datalist>
-              <input type="text" id="callsign" placeholder="ex : F5XYZ" maxlength="12"
-                list="stationList"
-                oninput="this.value=this.value.toUpperCase();onCallsignInput(this.value)"
-                autocomplete="off"
-                style="text-transform:uppercase; width:100%;"/>
+              <select id="callsign" onchange="onCallsignInput(this.value)">
+                <option value="">Station sans indicatif</option>
+              </select>
             </div>
           </div>
         </div>
@@ -1489,9 +1486,7 @@
 
         <!-- Affichage DD résultant + clic carte -->
         <div class="coord-display" id="pickDisplay" style="margin-top:6px">— Aucune position sélectionnée —</div>
-        <button class="btn btn-secondary" id="pickBtn" onclick="togglePickMode()" style="width:100%;margin-top:6px;padding:6px 10px;display:flex;align-items:center;gap:8px;justify-content:center;">
-          <span style="font-size:200%">🎯</span><span style="font-size:13px;letter-spacing:1px;">Cliquer sur la carte pour placer une station</span>
-        </button>
+
       </div>
 
       <div class="form-section">
@@ -1554,6 +1549,7 @@
           <div class="radio-btn" data-color="#ffff00" onclick="selectColor(this)">JAUNE</div>
           <div class="radio-btn" data-color="#1a1a1a" onclick="selectColor(this)">NOIR</div>
           <div class="radio-btn" data-color="#0044ff" onclick="selectColor(this)">BLEU</div>
+          <div class="radio-btn" data-color="#808080" onclick="selectColor(this)">GRIS</div>
         </div>
       </div>
 
@@ -1562,17 +1558,6 @@
 
     <!-- TAB: LIST -->
     <div class="tab-panel" id="tab-list">
-      <div class="info-grid" style="margin-bottom:4px">
-        <div class="info-card">
-          <div class="val" id="countBearings">0</div>
-          <div class="lbl">Relevés</div>
-        </div>
-        <div class="info-card">
-          <div class="val" id="countStations">0</div>
-          <div class="lbl">Stations</div>
-        </div>
-      </div>
-
       <div id="intersectionResult" style="display:none" class="intersection-card">
         <h3>// Intersection calculée</h3>
         <div class="intersection-coord" id="intersectionCoord">—</div>
@@ -2098,10 +2083,53 @@ let selectedColor = '#00d4ff';
 let colorManualOverride = false; // true si l'opérateur a choisi manuellement
 const callsignColors = {}; // mémorise la couleur par indicatif
 const AUTO_COLORS = ['#00d4ff','#ff6b35','#39ff14','#ff2d55','#bf5fff','#ffff00','#1a1a1a','#0044ff'];
+const DEFAULT_STATION_COLOR = '#808080';
 let sidebarVisible = false;
 let idCounter = 0;
 
-document.addEventListener('DOMContentLoaded', updateSidebarToggleButton);
+document.addEventListener('DOMContentLoaded', () => {
+  updateSidebarToggleButton();
+  updateStationList();
+  onCallsignInput(document.getElementById('callsign')?.value || '');
+});
+
+function normalizeCallsign(raw) {
+  return (raw || '').trim().toUpperCase();
+}
+
+function isDefaultStationCallsign(callsign) {
+  return !normalizeCallsign(callsign) || normalizeCallsign(callsign) === 'STATION';
+}
+
+function getAssignedColorForCallsign(callsign, reserve = true) {
+  const cs = normalizeCallsign(callsign);
+  if (!cs || cs === 'STATION') {
+    if (reserve) callsignColors['STATION'] = DEFAULT_STATION_COLOR;
+    return DEFAULT_STATION_COLOR;
+  }
+  if (callsignColors[cs]) return callsignColors[cs];
+
+  const usedColors = new Set(
+    Object.entries(callsignColors)
+      .filter(([key, value]) => key !== 'STATION' && value)
+      .map(([, value]) => value)
+  );
+  const color = AUTO_COLORS.find(c => !usedColors.has(c)) || AUTO_COLORS[Object.keys(callsignColors).length % AUTO_COLORS.length];
+  if (reserve) callsignColors[cs] = color;
+  return color;
+}
+
+function ensureCallsignOption(callsign) {
+  const select = document.getElementById('callsign');
+  if (!select) return;
+  const cs = normalizeCallsign(callsign);
+  if (!cs || cs === 'STATION') return;
+  if (Array.from(select.options).some(opt => opt.value === cs)) return;
+  const opt = document.createElement('option');
+  opt.value = cs;
+  opt.textContent = cs;
+  select.appendChild(opt);
+}
 
 // ─── HISTORIQUE UNDO ──────────────────────────────────────────────────────────
 const MAX_HISTORY = 20;
@@ -2132,9 +2160,7 @@ function undo() {
 
   // Effacer tous les layers actuels
   bearings.forEach(b => { if (layers[b.id]) { layers[b.id].remove(); delete layers[b.id]; } });
-  if (intersectionMarker) { intersectionMarker.remove(); intersectionMarker = null; }
-  intersectionState = null;
-  document.getElementById('intersectionResult').style.display = 'none';
+  clearIntersectionDisplay();
   // Stopper le clignotement d'édition si actif
   stopEditingBlink();
 
@@ -2143,7 +2169,7 @@ function undo() {
   bearings.forEach(b => drawBearing(b));
 
   renderList();
-  if (bearings.length >= 2) computeIntersection();
+  refreshIntersection(true);
   updateUndoBtn();
   notify(`↩ Annulé : ${label}`);
 }
@@ -2318,19 +2344,22 @@ function togglePickMode() {
   const badge = document.getElementById('modeBadge');
   if (pickMode) {
     mapEl.classList.add('picking-mode');
-    btn.textContent = '✕ Annuler la sélection';
-    btn.style.borderColor = 'var(--accent2)';
-    btn.style.color = 'var(--accent2)';
+    if (btn) {
+      btn.textContent = '✕ Annuler la sélection';
+      btn.style.borderColor = 'var(--accent2)';
+      btn.style.color = 'var(--accent2)';
+    }
     badge.className = 'mode-badge pick';
     badge.textContent = '⊕ MODE PLACEMENT';
   } else {
     mapEl.classList.remove('picking-mode');
-    btn.innerHTML = '<span style="font-size:300%">🎯</span> Cliquer sur la carte pour placer';
-    btn.style.borderColor = '';
-    btn.style.color = '';
+    if (btn) {
+      btn.innerHTML = '<span style="font-size:300%">🎯</span> Cliquer sur la carte pour placer';
+      btn.style.borderColor = '';
+      btn.style.color = '';
+    }
     badge.className = 'mode-badge normal';
     badge.textContent = '● MODE SÉLECTION';
-    // Remettre le pickDisplay à son état neutre si aucune position n'a été validée
     const disp = document.getElementById('pickDisplay');
     if (!disp.innerHTML.includes('coord-label')) {
       // already neutral
@@ -2371,6 +2400,20 @@ function customOperationAction() {
   notify('🛠 Bouton a definir: action en attente');
 }
 
+function toggleReleveTab() {
+  const addTabActive = document.getElementById('tab-add')?.classList.contains('active');
+  if (!sidebarVisible) {
+    toggleSidebar();
+    switchTab('add');
+    return;
+  }
+  if (addTabActive) {
+    toggleSidebar();
+    return;
+  }
+  switchTab('add');
+}
+
 // ─── ROLL CALL — Liste d'appel stations ─────────────────────────────────────
 
 function toggleRollcall() {
@@ -2390,20 +2433,29 @@ document.addEventListener('click', e => {
 function updateStationList() {
   const checked = Array.from(
     document.querySelectorAll('.rollcall-station input[type="checkbox"]:checked')
-  ).map(cb => cb.value);
+  ).map(cb => cb.value.toUpperCase());
 
-  // Alimente le datalist natif avec les stations cochées
-  const dl = document.getElementById('stationList');
-  if (dl) dl.innerHTML = checked.map(cs => `<option value="${cs}">`).join('');
+  const select = document.getElementById('callsign');
+  const currentValue = normalizeCallsign(select?.value || '');
+  if (select) {
+    const selectable = [...new Set(checked)].sort();
+    if (currentValue && currentValue !== 'STATION' && !selectable.includes(currentValue)) {
+      selectable.push(currentValue);
+      selectable.sort();
+    }
+    select.innerHTML = [
+      '<option value="">Station</option>',
+      ...selectable.map(cs => `<option value="${cs}">${cs}</option>`)
+    ].join('');
+    select.value = currentValue && selectable.includes(currentValue) ? currentValue : '';
+  }
 
-  // Badge
   const badge = document.getElementById('rcBadge');
   if (badge) {
     badge.textContent = checked.length;
     badge.style.display = checked.length ? 'inline-flex' : 'none';
   }
 
-  // Démarre le timer watchdog dès la coche
   checked.forEach(cs => {
     if (!(cs in lastSeen)) lastSeen[cs] = Date.now();
   });
@@ -2412,6 +2464,9 @@ function updateStationList() {
   ).forEach(cb => { delete lastSeen[cb.value]; });
 
   watchdogRender();
+  const finalValue = normalizeCallsign(select?.value || '');
+  if (finalValue !== currentValue) onCallsignInput(select?.value || '');
+  else updateColorPickerAvailability(finalValue || 'STATION');
 }
 
 // Met à jour les indicateurs "dernier relevé" dans le dropdown
@@ -2804,13 +2859,8 @@ function sendStationHere(cs) {
   if (!_ctxLatLng) return;
   const { lat, lng } = _ctxLatLng;
 
-  // Couleur : mémorisée ou prochaine libre dans la séquence
-  let color = callsignColors[cs];
-  if (!color) {
-    const usedColors = new Set(Object.values(callsignColors));
-    color = AUTO_COLORS.find(c => !usedColors.has(c)) || AUTO_COLORS[Object.keys(callsignColors).length % AUTO_COLORS.length];
-    callsignColors[cs] = color;
-  }
+  // Couleur station : persistante par indicatif
+  const color = getAssignedColorForCallsign(cs);
 
   // Supprime l'ancien repère si existant
   if (sendMarkers[cs]) { sendMarkers[cs].remove(); delete sendMarkers[cs]; }
@@ -2891,14 +2941,13 @@ function updateColorPickerAvailability(currentCS) {
 // Auto-appliquer la couleur mémorisée ou auto quand l'indicatif change
 
 function onCallsignInput(val) {
-  const cs = val.trim().toUpperCase();
+  const cs = normalizeCallsign(val);
   colorManualOverride = false;
   document.getElementById('qrk').value = '52';
   document.getElementById('uncertainty').value = '0';
   document.getElementById('lineLength').value = '100';
-  updateColorPickerAvailability(cs);
+  updateColorPickerAvailability(cs || 'STATION');
 
-  // BALISE : désactive azimut + change le bouton
   const isBalise = cs === 'BALISE';
   const azimutSection = document.getElementById('azimutFields');
   const ecouteRow = document.getElementById('ecouteNegative')?.closest('div[style]');
@@ -2918,17 +2967,14 @@ function onCallsignInput(val) {
       btn.style.color = '';
     }
   }
-  if (!cs || isBalise) return;
 
-  const activeCS = [...new Set(bearings.map(b => b.callsign.toUpperCase()))];
-  if (callsignColors[cs] && (activeCS.includes(cs) || negListenings.some(n => n.callsign === cs))) {
-    applyColorByValue(callsignColors[cs]);
-  } else {
-    // Toutes les couleurs déjà réservées (relevés + écoutes négatives)
-    const usedColors = new Set(Object.values(callsignColors));
-    const autoColor = AUTO_COLORS.find(c => !usedColors.has(c)) || AUTO_COLORS[Object.keys(callsignColors).length % AUTO_COLORS.length];
-    applyColorByValue(autoColor);
+  if (!cs) {
+    applyColorByValue(DEFAULT_STATION_COLOR);
+    return;
   }
+  if (isBalise) return;
+
+  applyColorByValue(getAssignedColorForCallsign(cs, false));
 }
 
 // Sélectionner un bouton couleur par sa valeur hex
@@ -3004,7 +3050,7 @@ function createPickMarker(lat, lon) {
     const lineLength  = parseFloat(document.getElementById('lineLength').value) || 50;
     const color       = selectedColor;
     const qrk         = parseInt(document.getElementById('qrk').value) || 52;
-    const callsign    = document.getElementById('callsign').value || '';
+    const callsign    = normalizeCallsign(document.getElementById('callsign').value) || 'STATION';
     const tmpItem     = { id, lat: pos.lat, lon: pos.lng, bearing, uncertainty, lineLength, color, qrk, callsign };
 
     // drawBearing ajoute lui-même à la carte et met à jour layers[id]
@@ -3348,7 +3394,7 @@ function getCoords() {
 
 function addBearing() {
   const { lat, lon } = getCoords();
-  const callsign = (document.getElementById("callsign").value.trim() || "Station").toUpperCase();
+  const callsign = normalizeCallsign(document.getElementById("callsign").value) || "STATION";
   const frequency = document.getElementById('frequency').value.trim() || '—';
   const notes = document.getElementById('notes').value.trim();
   const now = new Date();
@@ -3429,12 +3475,7 @@ function addBearing() {
     const id = ++idCounter;
     // Couleur : utilise celle déjà mémorisée pour cet indicatif,
     // sinon choisit la prochaine couleur libre dans la séquence
-    let color = callsignColors[csKey];
-    if (!color) {
-      const allUsed = new Set(Object.values(callsignColors));
-      color = AUTO_COLORS.find(c => !allUsed.has(c)) || AUTO_COLORS[Object.keys(callsignColors).length % AUTO_COLORS.length];
-    }
-    callsignColors[csKey] = color;   // réserve la couleur pour cette station
+    const color = getAssignedColorForCallsign(csKey);
     applyColorByValue(color);
     colorManualOverride = false;
     addNegMarker(lat, lon, csKey, id, color, timestamp);
@@ -3442,6 +3483,7 @@ function addBearing() {
     watchdogSignal(csKey);
     notify(`🚫 Écoute négative #${id} enregistrée pour ${csKey}`);
     document.getElementById('callsign').value = '';
+    onCallsignInput('');
     document.getElementById('notes').value = '';
     document.getElementById('ecouteNegative').checked = false;
     toggleEcouteNegative();
@@ -3461,7 +3503,9 @@ function addBearing() {
   if (isNaN(bearing) || bearing < 0 || bearing > 360) { notify('⚠ Azimut invalide (0–360°)', true); return; }
 
   const id = ++idCounter;
-  const color = selectedColor;
+  const color = isDefaultStationCallsign(csKey)
+    ? getAssignedColorForCallsign(csKey)
+    : (colorManualOverride ? selectedColor : getAssignedColorForCallsign(csKey));
   callsignColors[csKey] = color;
   colorManualOverride = false; // reset pour la prochaine saisie
   rollcallEnsure(csKey);    // ← ajoute à la liste d'appel si absent
@@ -3482,12 +3526,13 @@ function addBearing() {
   if (window._pickBlinkTimer) { clearInterval(window._pickBlinkTimer); window._pickBlinkTimer = null; }
   if (window._pickMarker) { window._pickMarker.remove(); window._pickMarker = null; }
   notify(`Relevé #${id} tracé ✓`);
+  refreshIntersection(true);
   document.getElementById('callsign').value = '';
+  onCallsignInput('');
   document.getElementById('notes').value = '';
   document.getElementById('bearing').value = '';
   clearBearingPreview();
   writeSaveFile(true);
-  if (bearings.length >= 2) computeIntersection();
 }
 
 // ─── ÉCOUTE NÉGATIVE ──────────────────────────────────────────────────────────
@@ -3581,6 +3626,10 @@ function removeNegMarker(callsign, id) {
   const key = `${callsign}_${id}`;
   if (negMarkers[key]) { negMarkers[key].remove(); delete negMarkers[key]; }
   negListenings = negListenings.filter(n => !(n.callsign === callsign && n.id === id));
+  const cs = normalizeCallsign(callsign);
+  if (cs && cs !== 'STATION' && !negListenings.some(n => normalizeCallsign(n.callsign) === cs) && !bearings.some(b => normalizeCallsign(b.callsign) === cs)) {
+    delete callsignColors[cs];
+  }
   map.closePopup();
   renderList();
   writeSaveFile(true);
@@ -3592,11 +3641,13 @@ function editNegMarker(callsign, id) {
   if (!n) return;
 
   // Pré-remplit le formulaire
-  switchTab('releve');
+  switchTab('add');
+  ensureCallsignOption(callsign);
   document.getElementById('callsign').value = callsign;
   document.getElementById('ecouteNegative').checked = true;
   toggleEcouteNegative();
   syncAllFormats(n.lat, n.lon, null);
+  onCallsignInput(callsign);
 
   // Supprime l'ancien marqueur — il sera recréé à la validation
   const key = `${callsign}_${id}`;
@@ -3841,31 +3892,40 @@ function drawBearing(item) {
 
 // ─── COMPUTE INTERSECTION ────────────────────────────────────────────────────
 // Least-squares intersection of bearing lines
-function computeIntersection() {
-  const visible = bearings.filter(b => !b.hidden);
-  if (visible.length < 2) { notify('⚠ Besoin d\'au moins 2 relevés visibles', true); return; }
+function clearIntersectionDisplay() {
+  if (intersectionMarker) {
+    intersectionMarker.remove();
+    intersectionMarker = null;
+  }
+  intersectionState = null;
+  window._intersectionLatLon = null;
+  const el = document.getElementById('intersectionResult');
+  if (el) el.style.display = 'none';
+}
 
-  // ── Projection Mercator ────────────────────────────────────────────────────
-  // Leaflet trace une ligne droite entre deux points géographiques.
-  // En projection Mercator (Web), cette droite correspond à une droite dans
-  // l'espace (x=lon, y=mercLat) où mercLat = ln(tan(π/4 + lat·π/360)).
-  // On travaille dans cet espace pour que l'intersection calculée coïncide
-  // exactement avec le croisement visuel des traits sur la carte.
+function refreshIntersection(auto = true) {
+  const visible = bearings.filter(b => !b.hidden);
+  if (visible.length < 2) {
+    clearIntersectionDisplay();
+    return;
+  }
+  computeIntersection(auto);
+}
+
+function computeIntersection(silent = false) {
+  const visible = bearings.filter(b => !b.hidden);
+  if (visible.length < 2) {
+    clearIntersectionDisplay();
+    if (!silent) notify("⚠ Besoin d'au moins 2 relevés visibles", true);
+    return;
+  }
 
   const DEG = Math.PI / 180;
   const EPS = 1e-10;
   const toMerc = lat => Math.log(Math.tan(Math.PI / 4 + lat * DEG / 2));
   const fromMerc = y => (2 * Math.atan(Math.exp(y)) - Math.PI / 2) / DEG;
-
-  // Pour chaque relevé, on calcule deux points en Mercator :
-  //   - la station d'origine
-  //   - un point lointain (lineLength km) dans la direction du relèvement
-  // La droite affichée par Leaflet passe exactement par ces deux points Mercator.
-
-  // Conversion d'un point géographique en Mercator
   const toXY = (lat, lon) => ({ x: lon, y: toMerc(lat) });
 
-  // Direction de la droite en espace Mercator (vecteur unitaire)
   const lines = visible.map(b => {
     const p0 = toXY(b.lat, b.lon);
     const dest = destinationPoint(b.lat, b.lon, b.bearing, b.lineLength || 100);
@@ -3876,38 +3936,30 @@ function computeIntersection() {
     return { x0: p0.x, y0: p0.y, dx: dx / len, dy: dy / len };
   });
 
-  // Moindres carrés des distances perpendiculaires en espace Mercator
-  // Distance perpendiculaire du point (X,Y) à la droite i :
-  //   d_i = -dy_i·(X - x0_i) + dx_i·(Y - y0_i)
-  // On minimise Σ d_i² → système normal 2×2
-
   let A00 = 0, A01 = 0, A11 = 0, B0 = 0, B1 = 0;
-
   for (const l of lines) {
     const { x0, y0, dx, dy } = l;
-    // Normale à la droite : (-dy, dx)
     const nx = -dy, ny = dx;
     A00 += nx * nx;
     A01 += nx * ny;
     A11 += ny * ny;
     const c = nx * x0 + ny * y0;
-    B0  += nx * c;
-    B1  += ny * c;
+    B0 += nx * c;
+    B1 += ny * c;
   }
 
   const det = A00 * A11 - A01 * A01;
   if (Math.abs(det) < EPS) {
-    notify('⚠ Relevés parallèles, impossible de calculer l\'intersection', true);
+    clearIntersectionDisplay();
+    if (!silent) notify("⚠ Relevés parallèles, impossible de calculer l'intersection", true);
     return;
   }
 
   const X = (B0 * A11 - B1 * A01) / det;
   const Y = (A00 * B1 - A01 * B0) / det;
-
   const intLon = X;
   const intLat = fromMerc(Y);
 
-  // RMS angulaire (azimut géodésique initial)
   let rmsSum = 0;
   visible.forEach(b => {
     const realAz = initialBearingDeg(b.lat, b.lon, intLat, intLon);
@@ -3916,14 +3968,8 @@ function computeIntersection() {
   });
   const rms = Math.sqrt(rmsSum / visible.length);
 
-  // Draw intersection
   if (intersectionMarker) intersectionMarker.remove();
 
-  // Rayon d'incertitude géographique (mètres), dérivé d'une covariance LSQ:
-  // 1) variance perpendiculaire résiduelle σ² = RSS/(N-2)
-  // 2) covariance en coordonnées Mercator: Cov = σ² * inv(A)
-  // 3) conversion locale en mètres (Jacobienne autour de l'intersection)
-  // 4) rayon = axe majeur à 95% (χ²(2 dof) = 5.991)
   let rss = 0;
   for (const l of lines) {
     const nx = -l.dy, ny = l.dx;
@@ -3941,8 +3987,8 @@ function computeIntersection() {
 
   const earthR = 6371000;
   const cosLatInt = Math.max(1e-6, Math.cos(intLat * DEG));
-  const metersPerX = earthR * DEG * cosLatInt; // x = longitude degrés
-  const metersPerY = earthR * cosLatInt;       // y = mercator (dimensionless)
+  const metersPerX = earthR * DEG * cosLatInt;
+  const metersPerY = earthR * cosLatInt;
 
   const covMX = covXX * metersPerX * metersPerX;
   const covMXY = covXY * metersPerX * metersPerY;
@@ -3957,22 +4003,24 @@ function computeIntersection() {
   const uncertaintyRadiusM = Math.min(120000, Math.max(250, radius95m));
   const uncertaintyRadiusKm = uncertaintyRadiusM / 1000;
 
+  const intersectionDecimal = `${intLat.toFixed(4)}° N ${intLon.toFixed(4)}° E`;
+  const intersectionDms = `${ddToDMS(intLat, true)} ${ddToDMS(intLon, false)}`;
+  const intersectionUtm = ddToUTM(intLat, intLon);
+  const intersectionLocator = `LOCATOR : ${latLonToMaidenhead(intLat, intLon)}`;
+
   const popupHtml = `
       <div class="popup-title" style="color:#ff2d55">⊕ Position fox estimée</div>
       <div class="popup-meta">
-        Lat : ${intLat.toFixed(4)}<br>
-        Lon : ${intLon.toFixed(4)}<br>
+        ${intersectionDecimal}<br>
+        ${intersectionDms}<br>
+        ${intersectionUtm}<br>
+        ${intersectionLocator}<br>
         Erreur RMS : ${rms.toFixed(2)}°<br>
         Rayon estimé : ${uncertaintyRadiusKm.toFixed(2)} km
       </div>
     `;
 
-  intersectionState = {
-    intLat,
-    intLon,
-    rms,
-    uncertaintyRadiusM
-  };
+  intersectionState = { intLat, intLon, rms, uncertaintyRadiusM };
 
   intersectionMarker = L.circle([intLat, intLon], {
     radius: uncertaintyRadiusM,
@@ -3989,16 +4037,17 @@ function computeIntersection() {
   const el = document.getElementById('intersectionResult');
   el.style.display = 'block';
   document.getElementById('intersectionCoord').textContent =
-    `${intLat.toFixed(4)}° N\n${intLon.toFixed(4)}° E`;
+    `${intLat.toFixed(4)}° N
+${intLon.toFixed(4)}° E`;
   document.getElementById('intersectionDMS').textContent =
-    `${ddToDMS(intLat, true)}  ${ddToDMS(intLon, false)}`;
+    intersectionDms;
   document.getElementById('intersectionUTM').textContent =
-    ddToUTM(intLat, intLon);
+    intersectionUtm;
   document.getElementById('intersectionError').textContent =
-    `LOCATOR : ${latLonToMaidenhead(intLat, intLon)}`;
+    intersectionLocator;
 
   window._intersectionLatLon = [intLat, intLon];
-  notify(`Intersection calculée ✓ (RMS ${rms.toFixed(1)}°)`);
+  if (!silent) notify(`Intersection calculée ✓ (RMS ${rms.toFixed(1)}°)`);
 }
 
 function centerIntersection() {
@@ -4089,6 +4138,7 @@ function editBearing(id) {
   map.closePopup();
 
   // Pré-remplir le formulaire avec les valeurs du relevé
+  ensureCallsignOption(b.callsign);
   document.getElementById('callsign').value   = b.callsign;
   document.getElementById('frequency').value  = b.frequency;
   document.getElementById('notes').value      = b.notes || '';
@@ -4112,6 +4162,7 @@ function editBearing(id) {
     btn.style.color       = active ? b.color : '';
   });
   selectedColor = b.color;
+  updateColorPickerAvailability(normalizeCallsign(b.callsign));
 
   // Garder le tracé visible sur la carte et le faire clignoter via JS
   window._editingLayerId = id;
@@ -4130,9 +4181,7 @@ function editBearing(id) {
   // Retirer de la liste bearings mais PAS du layer
   bearings = bearings.filter(x => x.id !== id);
   renderList();
-  if (intersectionMarker) { intersectionMarker.remove(); intersectionMarker = null; }
-  intersectionState = null;
-  document.getElementById('intersectionResult').style.display = 'none';
+  refreshIntersection(true);
 
   // Basculer sur l'onglet de saisie
   switchTab('add');
@@ -4173,8 +4222,7 @@ function toggleBearingVisibility(id) {
     drawBearing(b);
   }
   renderList();
-  if (bearings.filter(x => !x.hidden).length >= 2) computeIntersection();
-  else if (intersectionMarker) { map.removeLayer(intersectionMarker); intersectionMarker = null; intersectionState = null; document.getElementById('intersectionResult').style.display='none'; }
+  refreshIntersection(true);
 }
 
 function removeBearing(id) {
@@ -4184,17 +4232,14 @@ function removeBearing(id) {
   if (layers[id])       { layers[id].remove();       delete layers[id]; }
   if (labelMarkers[id]) { delete labelMarkers[id]; }
   // Nettoyer callsignColors si plus aucun relevé pour cet indicatif
-  if (b && !bearings.some(x => x.callsign.toUpperCase() === b.callsign.toUpperCase())) {
-    delete callsignColors[b.callsign.toUpperCase()];
+  if (b) {
+    const cs = normalizeCallsign(b.callsign);
+    if (cs && cs !== 'STATION' && !bearings.some(x => normalizeCallsign(x.callsign) === cs) && !negListenings.some(x => normalizeCallsign(x.callsign) === cs)) {
+      delete callsignColors[cs];
+    }
   }
   renderList();
-  if (intersectionMarker && bearings.length < 2) {
-    intersectionMarker.remove(); intersectionMarker = null;
-    intersectionState = null;
-    document.getElementById('intersectionResult').style.display = 'none';
-  } else if (bearings.length >= 2) {
-    computeIntersection();
-  }
+  refreshIntersection(true);
   notify(`Relevé #${id} supprimé`);
   writeSaveFile(true);
 }
@@ -4204,9 +4249,8 @@ function clearAll() {
   bearings.forEach(b => { if(layers[b.id]) layers[b.id].remove(); });
   layers = {};
   bearings = [];
-  if (intersectionMarker) { intersectionMarker.remove(); intersectionMarker = null; }
-  intersectionState = null;
-  document.getElementById('intersectionResult').style.display = 'none';
+  Object.keys(callsignColors).forEach(cs => { if (cs !== 'STATION') delete callsignColors[cs]; });
+  clearIntersectionDisplay();
   renderList();
   notify('Tous les relevés effacés');
 }
@@ -4954,6 +4998,7 @@ function aprsUseAsStation(call, lat, lon) {
   // Pré-remplir le formulaire de relevé avec la position APRS
   // On affiche uniquement l'indicatif de base sans le suffixe -x
   const baseCall = call.split('-')[0].toUpperCase();
+  ensureCallsignOption(baseCall);
   document.getElementById('callsign').value = baseCall;
   onCallsignInput(baseCall); // déclencher la séquence de couleur automatique
   document.getElementById('lat').value = lat.toFixed(4);
@@ -5243,9 +5288,7 @@ async function fallbackOpen() {
 
 function restoreBearings(savedBearings, savedNegListenings) {
   bearings.forEach(b => { if (layers[b.id]) { layers[b.id].remove(); delete layers[b.id]; } });
-  if (intersectionMarker) { intersectionMarker.remove(); intersectionMarker = null; }
-  intersectionState = null;
-  document.getElementById('intersectionResult').style.display = 'none';
+  clearIntersectionDisplay();
   bearings = [];
   // Nettoie les écoutes négatives existantes
   Object.values(negMarkers).forEach(m => m.remove());
@@ -5257,13 +5300,14 @@ function restoreBearings(savedBearings, savedNegListenings) {
   if (savedNegListenings) savedNegListenings.forEach(n => { if (n.id > maxId) maxId = n.id; });
   idCounter = maxId;
 
-  savedBearings.forEach(b => { bearings.push(b); drawBearing(b); if (b.callsign && b.color) callsignColors[b.callsign] = b.color; });
+  savedBearings.forEach(b => { bearings.push(b); drawBearing(b); if (b.callsign && b.color) callsignColors[normalizeCallsign(b.callsign)] = b.color; });
 
   // Restaure les écoutes négatives
   if (savedNegListenings) savedNegListenings.forEach(n => addNegMarker(n.lat, n.lon, n.callsign, n.id, n.color, n.timestamp));
 
   renderList();
-  if (bearings.length >= 2) computeIntersection();
+  updateStationList();
+  refreshIntersection(true);
   fitBounds();
 }
 
@@ -5315,6 +5359,7 @@ function exportCSV() {
 // ─── DEMO ─────────────────────────────────────────────────────────────────────
 // Pré-remplir l'horodatage avec l'heure actuelle
 setNow();
+callsignColors['STATION'] = DEFAULT_STATION_COLOR;
 
 
 </script>
