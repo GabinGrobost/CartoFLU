@@ -1,0 +1,7 @@
+{
+  "members": [
+    { "callsign": "F4ABC", "name": "Jean Dupont" },
+    { "callsign": "F1XYZ", "name": "Equipe Mobile 1" },
+    { "callsign": "F4FLU", "name": "PC Radio" }
+  ]
+}
