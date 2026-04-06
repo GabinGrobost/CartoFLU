@@ -3834,7 +3834,17 @@ function drawBearing(item) {
       sectors.push(destinationPoint(lat, lon, a, lineLength));
     }
     sectors.push([lat, lon]);
-    L.polygon(sectors, {
+    const intersectionHole = [];
+    if (intersectionState?.uncertaintyRadiusM > 0) {
+      const holeSteps = 96;
+      const holeRadiusKm = intersectionState.uncertaintyRadiusM / 1000;
+      for (let i = 0; i <= holeSteps; i++) {
+        const a = 360 - (360 * i / holeSteps);
+        intersectionHole.push(destinationPoint(intersectionState.intLat, intersectionState.intLon, a, holeRadiusKm));
+      }
+    }
+    const uncertaintyShape = intersectionHole.length ? [sectors, intersectionHole] : sectors;
+    L.polygon(uncertaintyShape, {
       color: '#ff2d55',
       className: 'uncertainty-sector',
       fillColor: '#ff2d55',
@@ -3955,6 +3965,9 @@ function clearIntersectionDisplay() {
     intersectionMarker = null;
   }
   intersectionState = null;
+  Object.values(layers).forEach(layer => layer?.remove && layer.remove());
+  Object.keys(layers).forEach(id => delete layers[id]);
+  bearings.forEach(b => drawBearing(b));
   window._intersectionLatLon = null;
   const el = document.getElementById('intersectionResult');
   if (el) el.style.display = 'none';
@@ -4093,6 +4106,10 @@ function computeIntersection(silent = false) {
     intersectionMarker.addTo(map);
     intersectionMarker.bringToFront();
   }
+
+  Object.values(layers).forEach(layer => layer?.remove && layer.remove());
+  Object.keys(layers).forEach(id => delete layers[id]);
+  bearings.forEach(b => drawBearing(b));
 
   const el = document.getElementById('intersectionResult');
   el.style.display = 'block';
