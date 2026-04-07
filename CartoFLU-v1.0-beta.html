@@ -2459,10 +2459,11 @@ function findOfflineBasemapKey(preferredKey = currentBasemapKey) {
   return null;
 }
 
-async function switchToOfflineBasemap(preferredKey = currentBasemapKey) {
+async function switchToOfflineBasemap(preferredKey = currentBasemapKey, opts = {}) {
+  const silent = !!opts.silent;
   const fallbackKey = findOfflineBasemapKey(preferredKey);
   if (!fallbackKey) {
-    notify('⚠ Aucun fond de carte local disponible pour bascule hors ligne', true);
+    if (!silent) notify('⚠ Aucun fond de carte local disponible pour bascule hors ligne', true);
     return false;
   }
   await changeBasemap(fallbackKey);
@@ -2470,7 +2471,7 @@ async function switchToOfflineBasemap(preferredKey = currentBasemapKey) {
   if (select && Array.from(select.options).some(opt => opt.value === fallbackKey)) {
     select.value = fallbackKey;
   }
-  notify(`🗺️ Basculé en carte hors ligne (${fallbackKey})`);
+  if (!silent) notify(`🗺️ Basculé en carte hors ligne (${fallbackKey})`);
   return true;
 }
 
@@ -2793,7 +2794,7 @@ async function loadRuntimeConfig() {
 document.addEventListener('DOMContentLoaded', async () => {
   await loadRuntimeConfig();
   applyRuntimeConfig();
-  startInitialInternetAccessCheck();
+  await startInitialInternetAccessCheck();
   updateSidebarToggleButton();
   updateStationList();
   updateOperationControls();
@@ -3382,12 +3383,16 @@ async function hasInternetAccess() {
 function startInitialInternetAccessCheck() {
   if (initialInternetAccessCheckPromise) return initialInternetAccessCheckPromise;
   initialInternetAccessCheckPromise = hasInternetAccess()
-    .then(online => {
+    .then(async online => {
       lastInternetAccessStatus = !!online;
+      if (!lastInternetAccessStatus) {
+        await switchToOfflineBasemap(currentBasemapKey, { silent: true });
+      }
       return lastInternetAccessStatus;
     })
-    .catch(() => {
+    .catch(async () => {
       lastInternetAccessStatus = false;
+      await switchToOfflineBasemap(currentBasemapKey, { silent: true });
       return false;
     });
   return initialInternetAccessCheckPromise;
