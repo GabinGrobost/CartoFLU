@@ -2062,7 +2062,7 @@
       <div class="form-section">
         <h3>// À propos</h3>
         <div class="hint-box">
-          <strong>CartoFLU version 1.0</strong> / Logiciel de tracé radiogoniométrique sur fond de carte OpenStreetMap.<br><br>
+          <strong id="softwareVersionLabel">CartoFLU version 1.0</strong> / Logiciel de tracé radiogoniométrique sur fond de carte OpenStreetMap.<br><br>
           Copyright © 2026 Christophe Chalandre / <strong>F4FLU</strong><br><br>
           Ce programme est un logiciel libre : vous pouvez le redistribuer et/ou le modifier selon les termes de la <em>Licence Publique Générale GNU (GPL), version 3</em>, telle que publiée par la Free Software Foundation.<br><br>
           Ce programme est distribué dans l'espoir qu'il sera utile, mais <strong>SANS AUCUNE GARANTIE</strong>.
@@ -2591,8 +2591,54 @@ const AUTO_COLORS = ['#00d4ff','#ff6b35','#39ff14','#ff2d55','#bf5fff','#ffff00'
 const DEFAULT_STATION_COLOR = '#808080';
 let sidebarVisible = false;
 let idCounter = 0;
+let maintenanceMode = false;
+const runtimeConfig = {
+  entityName: 'ADRASEC 25',
+  aprsApiKey: '',
+  forceOffline: false,
+  maintenance: false,
+  softwareVersion: '1.0'
+};
+
+function applyRuntimeConfig() {
+  const entity = (runtimeConfig.entityName || 'ADRASEC 25').trim();
+  const pcLine = document.querySelector('#pcMenuToggle .pc-line-1');
+  if (pcLine) pcLine.textContent = entity;
+  document.title = `CartoFLU — ${entity}`;
+
+  const versionLabel = document.getElementById('softwareVersionLabel');
+  if (versionLabel) versionLabel.textContent = `CartoFLU version ${runtimeConfig.softwareVersion || '1.0'}`;
+
+  const aprsInput = document.getElementById('aprsApiKey');
+  if (aprsInput && runtimeConfig.aprsApiKey) {
+    aprsInput.value = runtimeConfig.aprsApiKey;
+    localStorage.setItem('cartoflu_aprs_key', runtimeConfig.aprsApiKey);
+  }
+
+  maintenanceMode = !!runtimeConfig.maintenance;
+  if (maintenanceMode) {
+    notify('🛠 Mode maintenance actif : ouverture/rejointure d’opération bloquée', true);
+  }
+}
+
+async function loadRuntimeConfig() {
+  try {
+    const resp = await fetch('config.json', { cache: 'no-store' });
+    if (!resp.ok) return;
+    const cfg = await resp.json();
+    runtimeConfig.entityName = String(cfg['entity-name'] ?? cfg.entityName ?? runtimeConfig.entityName);
+    runtimeConfig.aprsApiKey = String(cfg['aprsfi-api-key'] ?? cfg.aprsApiKey ?? runtimeConfig.aprsApiKey);
+    runtimeConfig.forceOffline = !!(cfg['force-offline'] ?? cfg.forceOffline ?? runtimeConfig.forceOffline);
+    runtimeConfig.maintenance = !!(cfg.maintenance ?? cfg.mantenance ?? runtimeConfig.maintenance);
+    runtimeConfig.softwareVersion = String(cfg['software-version'] ?? cfg.softwareVersion ?? runtimeConfig.softwareVersion);
+  } catch (e) {
+    console.warn('[CartoFLU] config.json non chargé :', e);
+  }
+}
 
 document.addEventListener('DOMContentLoaded', async () => {
+  await loadRuntimeConfig();
+  applyRuntimeConfig();
   updateSidebarToggleButton();
   updateStationList();
   updateOperationControls();
@@ -3132,6 +3178,7 @@ function probeInternetImage(url, timeout = 2600) {
 }
 
 async function hasInternetAccess() {
+  if (runtimeConfig.forceOffline) return false;
   if (navigator.onLine === false) return false;
   const probes = [
     'https://tile.openstreetmap.org/0/0/0.png',
@@ -3233,6 +3280,10 @@ function setSarToggleValue(fieldId, value, btn) {
 }
 
 function submitSarOperation() {
+  if (maintenanceMode) {
+    notify('🛠 Mode maintenance actif : création d’opération indisponible', true);
+    return;
+  }
   const name = document.getElementById('sarOperationName')?.value.trim() || '';
   const ref = (document.getElementById('sarOperationRef')?.value || '').trim().toUpperCase();
   const type = document.getElementById('sarOperationType')?.value || '';
@@ -3273,6 +3324,10 @@ function submitSarOperation() {
 }
 
 async function openOperation() {
+  if (maintenanceMode) {
+    notify('🛠 Mode maintenance actif : ouverture d’opération indisponible', true);
+    return;
+  }
   if (sarOperationCheckInFlight) return;
   sarOperationCheckInFlight = true;
   setOpenOperationBusy(true);
@@ -3298,6 +3353,10 @@ async function openOperation() {
 }
 
 function joinOperation() {
+  if (maintenanceMode) {
+    notify('🛠 Mode maintenance actif : rejointure d’opération indisponible', true);
+    return;
+  }
   closePcMenu();
   const currentName = currentSarOperation?.name || '';
   const enteredName = window.prompt("Nom ou référence de l'opération à rejoindre :", currentName);
