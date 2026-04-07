@@ -2894,10 +2894,102 @@ map.on('click', e => {
 let sarOperationMode = 'connected';
 let sarOperationCheckInFlight = false;
 let currentSarOperation = null;
+const OP_ACTIVE_ENDPOINT = 'save-op-active.php';
+let _opActiveSyncTimer = null;
+let _opActiveSyncInFlight = false;
+let _opActiveLastPayload = '';
 
 function hasActiveOperation() {
   return !!currentSarOperation;
 }
+
+function getRollcallStationsSnapshot() {
+  const stations = Array.from(
+    document.querySelectorAll('.rollcall-station input[type="checkbox"]')
+  ).map(cb => {
+    const callsign = (cb.value || '').toUpperCase();
+    return {
+      callsign,
+      present: !!cb.checked,
+      lastSeenAt: lastSeen[callsign] ? new Date(lastSeen[callsign]).toISOString() : null
+    };
+  }).filter(st => !!st.callsign);
+
+  const presentCallsigns = stations
+    .filter(st => st.present)
+    .map(st => st.callsign)
+    .sort();
+
+  return {
+    totalStations: stations.length,
+    presentCount: presentCallsigns.length,
+    presentCallsigns,
+    stations
+  };
+}
+
+function getBaliseSnapshot() {
+  if (!balisMarker) return null;
+  const p = balisMarker.getLatLng();
+  return { lat: p.lat, lon: p.lng };
+}
+
+function buildOpActivePayload(source = 'ui') {
+  return {
+    version: 1,
+    kind: 'op-active',
+    app: 'CartoFLU',
+    active: hasActiveOperation(),
+    updatedAt: new Date().toISOString(),
+    operation: currentSarOperation ? { ...currentSarOperation } : null,
+    rollcall: getRollcallStationsSnapshot(),
+    session: {
+      bearings: bearings.map(b => ({ ...b })),
+      negListenings: negListenings.map(n => ({ ...n })),
+      balise: getBaliseSnapshot(),
+      intersection: intersectionState ? { ...intersectionState } : null
+    },
+    sync: {
+      source,
+      path: location.pathname || '/'
+    }
+  };
+}
+
+async function flushOpActiveSync(source = 'ui') {
+  if (_opActiveSyncInFlight) return;
+  const payload = buildOpActivePayload(source);
+  const payloadText = JSON.stringify(payload);
+  if (payloadText === _opActiveLastPayload) return;
+  _opActiveSyncInFlight = true;
+  try {
+    const resp = await fetch(OP_ACTIVE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payloadText,
+      keepalive: true
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    _opActiveLastPayload = payloadText;
+  } catch (e) {
+    console.warn('[CartoFLU] Sync op-active.json impossible :', e);
+  } finally {
+    _opActiveSyncInFlight = false;
+  }
+}
+
+function scheduleOpActiveSync(source = 'ui') {
+  if (_opActiveSyncTimer) clearTimeout(_opActiveSyncTimer);
+  _opActiveSyncTimer = setTimeout(() => {
+    _opActiveSyncTimer = null;
+    flushOpActiveSync(source);
+  }, 200);
+}
+
+window.addEventListener('beforeunload', () => {
+  if (_opActiveSyncTimer) clearTimeout(_opActiveSyncTimer);
+  flushOpActiveSync('beforeunload');
+});
 
 function setElementDisplay(element, visible, displayValue = 'inline-flex') {
   if (!element) return;
@@ -3082,6 +3174,7 @@ function submitSarOperation() {
   closeSarOperationOverlay();
   updateOperationControls();
   notify(`📂 Opération ${name} ouverte en ${sarOperationMode === 'degraded' ? 'mode dégradé' : 'mode connecté'} ✓`);
+  scheduleOpActiveSync('operation-opened');
 }
 
 async function openOperation() {
@@ -3133,6 +3226,7 @@ function joinOperation() {
 
   updateOperationControls();
   notify(`🤝 Opération ${name} rejointe ✓`);
+  scheduleOpActiveSync('operation-joined');
 }
 
 function closeOperation() {
@@ -3149,6 +3243,7 @@ function closeOperation() {
   closeMapContextMenu();
   updateOperationControls();
   notify(`🗂 Opération ${operationName} cloturée ✓`);
+  scheduleOpActiveSync('operation-closed');
 }
 
 function customOperationAction() {
@@ -3317,6 +3412,7 @@ function updateStationList() {
   else updateColorPickerAvailability(finalValue || 'STATION');
 
   if (aprsTimer) refreshAprsTrackingFromRollcall();
+  scheduleOpActiveSync('rollcall-updated');
 }
 
 // Met à jour les indicateurs "dernier relevé" dans le dropdown
@@ -4388,6 +4484,7 @@ function addBearing() {
     onCallsignInput('');
     notify('✚ Balise (fox) placée sur la carte');
     writeSaveFile(true);
+    scheduleOpActiveSync('balise-updated');
     return;
   }
   if (document.getElementById('ecouteNegative').checked) {
@@ -4411,6 +4508,7 @@ function addBearing() {
     if (window._pickBlinkTimer) { clearInterval(window._pickBlinkTimer); window._pickBlinkTimer = null; }
     if (window._pickMarker) { window._pickMarker.remove(); window._pickMarker = null; }
     writeSaveFile(true);
+    scheduleOpActiveSync('neg-listening-added');
     return;
   }
 
@@ -4452,6 +4550,7 @@ function addBearing() {
   document.getElementById('bearing').value = '';
   clearBearingPreview();
   writeSaveFile(true);
+  scheduleOpActiveSync('bearing-added');
 }
 
 // ─── ÉCOUTE NÉGATIVE ──────────────────────────────────────────────────────────
@@ -5243,6 +5342,7 @@ function toggleBearingVisibility(id) {
   drawBearing(b);
   renderList();
   scheduleAutoIntersectionRefresh();
+  scheduleOpActiveSync('bearing-visibility-toggled');
 }
 
 function removeBearing(id) {
@@ -5262,6 +5362,7 @@ function removeBearing(id) {
   scheduleAutoIntersectionRefresh();
   notify(`Relevé #${id} supprimé`);
   writeSaveFile(true);
+  scheduleOpActiveSync('bearing-removed');
 }
 
 function clearAll() {
@@ -5273,6 +5374,7 @@ function clearAll() {
   clearIntersectionDisplay();
   renderList();
   notify('Tous les relevés effacés');
+  scheduleOpActiveSync('all-bearings-cleared');
 }
 
 // ─── MAP CONTROLS ─────────────────────────────────────────────────────────────
