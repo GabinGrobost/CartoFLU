@@ -2190,6 +2190,10 @@
               <input type="text" id="sarOperationName" placeholder="ex : SAR Montfaucon - secteur Est" />
             </div>
             <div class="form-group">
+              <label for="sarOperationRef">REF opération</label>
+              <input type="text" id="sarOperationRef" placeholder="AAMMDDXXXX (ex : 2604250001)" maxlength="10" />
+            </div>
+            <div class="form-group">
               <label for="sarOperationType">Type d'opération</label>
               <select id="sarOperationType">
                 <option value="">Sélectionner…</option>
@@ -3070,16 +3074,27 @@ async function hasInternetAccess() {
 
 function resetSarOperationForm() {
   const name = document.getElementById('sarOperationName');
+  const ref = document.getElementById('sarOperationRef');
   const type = document.getElementById('sarOperationType');
   const sizing = document.getElementById('sarSizing');
   const exercise = document.getElementById('sarExercise');
   if (name) name.value = '';
+  if (ref) ref.value = buildDefaultOperationRef();
   if (type) type.value = '';
   if (sizing) sizing.value = '';
   if (exercise) exercise.value = 'non';
   document.querySelectorAll('#sarExerciseToggle .sar-toggle-btn').forEach((btn, index) => {
     btn.classList.toggle('active', index === 0);
   });
+}
+
+function buildDefaultOperationRef() {
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(-2);
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = '25';
+  const seq = '0001';
+  return `${yy}${mm}${dd}${seq}`;
 }
 
 function updateSarOperationModeUi(mode) {
@@ -3147,6 +3162,7 @@ function setSarToggleValue(fieldId, value, btn) {
 
 function submitSarOperation() {
   const name = document.getElementById('sarOperationName')?.value.trim() || '';
+  const ref = (document.getElementById('sarOperationRef')?.value || '').trim().toUpperCase();
   const type = document.getElementById('sarOperationType')?.value || '';
   const exercise = document.getElementById('sarExercise')?.value || 'non';
   const sizing = document.getElementById('sarSizing')?.value.trim() || '';
@@ -3161,9 +3177,15 @@ function submitSarOperation() {
     document.getElementById('sarOperationType')?.focus();
     return;
   }
+  if (!/^\d{10}$/.test(ref)) {
+    notify('⚠ REF invalide (format attendu : AAMMDDXXXX, 10 chiffres)', true);
+    document.getElementById('sarOperationRef')?.focus();
+    return;
+  }
 
   currentSarOperation = {
     name,
+    ref,
     type,
     exercise,
     sizing,
@@ -6495,6 +6517,13 @@ function exportCSV() {
 // Pré-remplir l'horodatage avec l'heure actuelle
 setNow();
 callsignColors['STATION'] = DEFAULT_STATION_COLOR;
+
+const sarOperationRefInput = document.getElementById('sarOperationRef');
+if (sarOperationRefInput) {
+  sarOperationRefInput.addEventListener('input', () => {
+    sarOperationRefInput.value = sarOperationRefInput.value.replace(/\D+/g, '').slice(0, 10);
+  });
+}
 
 
 </script>
