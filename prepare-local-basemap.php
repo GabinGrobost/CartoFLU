@@ -20,9 +20,17 @@ if (!is_array($data)) {
 
 $localUrlTemplate = (string)($data['localUrlTemplate'] ?? '');
 $seedUrlTemplate  = (string)($data['seedUrlTemplate'] ?? '');
-$z = max(0, min(18, (int)($data['z'] ?? 0)));
-$x = (int)($data['x'] ?? 0);
-$y = (int)($data['y'] ?? 0);
+$plan = is_array($data['plan'] ?? null) ? $data['plan'] : [];
+
+$minZoom = max(0, min(18, (int)($plan['minZoom'] ?? 6)));
+$maxZoom = max($minZoom, min(18, (int)($plan['maxZoom'] ?? 14)));
+$boundsRaw = is_array($plan['bounds'] ?? null) ? $plan['bounds'] : [];
+$north = (float)($boundsRaw['north'] ?? 51.2);
+$south = (float)($boundsRaw['south'] ?? 41.2);
+$west = (float)($boundsRaw['west'] ?? -5.8);
+$east = (float)($boundsRaw['east'] ?? 9.8);
+if ($north < $south) { $tmp = $north; $north = $south; $south = $tmp; }
+if ($east < $west) { $tmp = $east; $east = $west; $west = $tmp; }
 
 if ($localUrlTemplate === '' || $seedUrlTemplate === '') {
     http_response_code(400);
@@ -69,33 +77,52 @@ if (!is_dir($localRoot) && !mkdir($localRoot, 0775, true) && !is_dir($localRoot)
 $downloaded = 0;
 $failed = 0;
 
-for ($dx = -1; $dx <= 1; $dx++) {
-    for ($dy = -1; $dy <= 1; $dy++) {
-        $tx = $x + $dx;
-        $ty = $y + $dy;
-        if ($tx < 0 || $ty < 0) continue;
+function latLngToTile(float $lat, float $lon, int $zoom): array {
+    $n = 2 ** $zoom;
+    $x = (int)floor((($lon + 180.0) / 360.0) * $n);
+    $latRad = deg2rad($lat);
+    $y = (int)floor((1.0 - log(tan($latRad) + (1 / cos($latRad))) / M_PI) / 2.0 * $n);
+    $x = max(0, min($n - 1, $x));
+    $y = max(0, min($n - 1, $y));
+    return [$x, $y];
+}
 
+set_time_limit(0);
+ignore_user_abort(true);
+
+for ($z = $minZoom; $z <= $maxZoom; $z++) {
+    [$xMin, $yMin] = latLngToTile($north, $west, $z);
+    [$xMax, $yMax] = latLngToTile($south, $east, $z);
+    if ($xMax < $xMin) { $tmp = $xMax; $xMax = $xMin; $xMin = $tmp; }
+    if ($yMax < $yMin) { $tmp = $yMax; $yMax = $yMin; $yMin = $tmp; }
+
+    for ($tx = $xMin; $tx <= $xMax; $tx++) {
         $targetDir = $localRoot . DIRECTORY_SEPARATOR . $z . DIRECTORY_SEPARATOR . $tx;
         if (!is_dir($targetDir) && !mkdir($targetDir, 0775, true) && !is_dir($targetDir)) {
-            $failed++;
+            $failed += ($yMax - $yMin + 1);
             continue;
         }
 
-        $sourceUrl = str_replace(['{z}', '{x}', '{y}'], [(string)$z, (string)$tx, (string)$ty], $seedUrlTemplate);
-        $targetFile = $targetDir . DIRECTORY_SEPARATOR . $ty . '.' . $targetExt;
+        for ($ty = $yMin; $ty <= $yMax; $ty++) {
+            $sourceUrl = str_replace(['{z}', '{x}', '{y}'], [(string)$z, (string)$tx, (string)$ty], $seedUrlTemplate);
+            $targetFile = $targetDir . DIRECTORY_SEPARATOR . $ty . '.' . $targetExt;
+            if (is_file($targetFile) && filesize($targetFile) > 0) {
+                continue;
+            }
 
-        $ctx = stream_context_create(['http' => ['timeout' => 7]]);
-        $content = @file_get_contents($sourceUrl, false, $ctx);
-        if ($content === false || $content === '') {
-            $failed++;
-            continue;
-        }
+            $ctx = stream_context_create(['http' => ['timeout' => 7]]);
+            $content = @file_get_contents($sourceUrl, false, $ctx);
+            if ($content === false || $content === '') {
+                $failed++;
+                continue;
+            }
 
-        if (@file_put_contents($targetFile, $content, LOCK_EX) === false) {
-            $failed++;
-            continue;
+            if (@file_put_contents($targetFile, $content, LOCK_EX) === false) {
+                $failed++;
+                continue;
+            }
+            $downloaded++;
         }
-        $downloaded++;
     }
 }
 
@@ -103,5 +130,10 @@ echo json_encode([
     'ok' => true,
     'downloaded' => $downloaded,
     'failed' => $failed,
-    'path' => $basePart
+    'path' => $basePart,
+    'plan' => [
+        'minZoom' => $minZoom,
+        'maxZoom' => $maxZoom,
+        'bounds' => ['north' => $north, 'south' => $south, 'west' => $west, 'east' => $east]
+    ]
 ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

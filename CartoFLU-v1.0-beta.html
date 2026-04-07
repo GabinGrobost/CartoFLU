@@ -2447,6 +2447,27 @@ function resolveOfflineBasemap(key) {
   };
 }
 
+function normalizeDownloadPlan(rawPlan) {
+  const fallback = runtimeConfig.localBasemapDownload || {};
+  const minZoom = Math.max(0, Math.min(18, Number(rawPlan?.minZoom ?? fallback.minZoom ?? 6)));
+  const maxZoom = Math.max(minZoom, Math.min(18, Number(rawPlan?.maxZoom ?? fallback.maxZoom ?? 14)));
+  const rawBounds = rawPlan?.bounds || fallback.bounds || {};
+  const north = Number(rawBounds.north ?? 51.2);
+  const south = Number(rawBounds.south ?? 41.2);
+  const west = Number(rawBounds.west ?? -5.8);
+  const east = Number(rawBounds.east ?? 9.8);
+  return {
+    minZoom,
+    maxZoom,
+    bounds: {
+      north: Math.max(south, north),
+      south: Math.min(south, north),
+      west: Math.min(west, east),
+      east: Math.max(west, east)
+    }
+  };
+}
+
 function getOnlineSeedUrlTemplate(key) {
   if (key === 'ignplan') {
     return 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image/png&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}';
@@ -2498,14 +2519,22 @@ async function ensureLocalBasemapPrepared(key) {
   );
   if (!wantsCreate) return;
 
-  const c = map.getCenter();
-  const z = Math.max(0, Math.min(18, map.getZoom() || 0));
-  const tile = latLngToTile(c.lat, c.lng, z);
+  const downloadPlan = normalizeDownloadPlan(runtimeConfig.localBasemapDownload);
+  let estimatedTiles = 0;
+  for (let z = downloadPlan.minZoom; z <= downloadPlan.maxZoom; z++) {
+    const nw = latLngToTile(downloadPlan.bounds.north, downloadPlan.bounds.west, z);
+    const se = latLngToTile(downloadPlan.bounds.south, downloadPlan.bounds.east, z);
+    estimatedTiles += Math.max(1, se.x - nw.x + 1) * Math.max(1, se.y - nw.y + 1);
+  }
   const seedUrlTemplate = getOnlineSeedUrlTemplate(key);
   if (!seedUrlTemplate) {
     notify(`⚠ Seed automatique indisponible pour "${key}"`, true);
     return;
   }
+  const confirmAllTiles = window.confirm(
+    `Télécharger tout le fond local "${key}" ?\nZone: N${downloadPlan.bounds.north} S${downloadPlan.bounds.south} W${downloadPlan.bounds.west} E${downloadPlan.bounds.east}\nZoom: ${downloadPlan.minZoom} → ${downloadPlan.maxZoom}\nTuiles estimées: ${estimatedTiles}`
+  );
+  if (!confirmAllTiles) return;
 
   try {
     const resp = await fetch('prepare-local-basemap.php', {
@@ -2515,9 +2544,7 @@ async function ensureLocalBasemapPrepared(key) {
         key,
         localUrlTemplate,
         seedUrlTemplate,
-        z: tile.z,
-        x: tile.x,
-        y: tile.y
+        plan: downloadPlan
       })
     });
     const data = await resp.json().catch(() => ({}));
@@ -2525,7 +2552,7 @@ async function ensureLocalBasemapPrepared(key) {
       notify(`⚠ Échec préparation cartes locales (${data.error || resp.status})`, true);
       return;
     }
-    notify(`✓ Cartes locales préparées (${data.downloaded || 0} tuile(s))`);
+    notify(`✓ Cartes locales préparées (${data.downloaded || 0} téléchargée(s), ${data.failed || 0} échec(s))`);
   } catch (e) {
     console.warn('[CartoFLU] prepare-local-basemap:', e);
     notify('⚠ Impossible de préparer les cartes locales', true);
@@ -2681,6 +2708,11 @@ const runtimeConfig = {
   departementCode: '25',
   forceOffline: false,
   localBasemapUrls: {},
+  localBasemapDownload: {
+    minZoom: 6,
+    maxZoom: 14,
+    bounds: { north: 51.2, south: 41.2, west: -5.8, east: 9.8 }
+  },
   maintenance: false,
   softwareVersion: '1.0'
 };
@@ -2717,6 +2749,9 @@ async function loadRuntimeConfig() {
     runtimeConfig.localBasemapUrls = (cfg['local-basemap-urls'] && typeof cfg['local-basemap-urls'] === 'object')
       ? cfg['local-basemap-urls']
       : ((cfg.localBasemapUrls && typeof cfg.localBasemapUrls === 'object') ? cfg.localBasemapUrls : runtimeConfig.localBasemapUrls);
+    runtimeConfig.localBasemapDownload = normalizeDownloadPlan(
+      cfg['local-basemap-download'] ?? cfg.localBasemapDownload ?? runtimeConfig.localBasemapDownload
+    );
     runtimeConfig.maintenance = !!(cfg.maintenance ?? cfg.mantenance ?? runtimeConfig.maintenance);
     runtimeConfig.softwareVersion = String(cfg['software-version'] ?? cfg.softwareVersion ?? runtimeConfig.softwareVersion);
   } catch (e) {
