@@ -2899,6 +2899,7 @@ map.on('click', e => {
 let sarOperationMode = 'connected';
 let sarOperationCheckInFlight = false;
 let currentSarOperation = null;
+let lastSarOperationMeta = null;
 const OP_ACTIVE_ENDPOINT = 'save-op-active.php';
 let _opActiveSyncTimer = null;
 let _opActiveSyncInFlight = false;
@@ -2906,6 +2907,16 @@ let _opActiveLastPayload = '';
 
 function hasActiveOperation() {
   return !!currentSarOperation;
+}
+
+function getSarOperationFormSnapshot() {
+  const name = document.getElementById('sarOperationName')?.value.trim() || '';
+  const ref = (document.getElementById('sarOperationRef')?.value || '').trim().toUpperCase();
+  const type = document.getElementById('sarOperationType')?.value || '';
+  const exercise = document.getElementById('sarExercise')?.value || 'non';
+  const sizing = document.getElementById('sarSizing')?.value.trim() || '';
+  const hasAnyValue = !!(name || ref || type || sizing);
+  return { hasAnyValue, name, ref, type, exercise, sizing };
 }
 
 function getRollcallStationsSnapshot() {
@@ -2940,13 +2951,28 @@ function getBaliseSnapshot() {
 }
 
 function buildOpActivePayload(source = 'ui') {
+  const operationForm = getSarOperationFormSnapshot();
+  const { hasAnyValue, ...operationFormData } = operationForm;
+  const operation = currentSarOperation
+    ? { ...currentSarOperation }
+    : (hasAnyValue
+      ? { ...operationFormData, draft: true }
+      : (lastSarOperationMeta ? { ...lastSarOperationMeta } : null));
+
   return {
     version: 1,
     kind: 'op-active',
     app: 'CartoFLU',
     active: hasActiveOperation(),
     updatedAt: new Date().toISOString(),
-    operation: currentSarOperation ? { ...currentSarOperation } : null,
+    operation,
+    operationForm: {
+      name: operationFormData.name,
+      ref: operationFormData.ref,
+      type: operationFormData.type,
+      exercise: operationFormData.exercise,
+      sizing: operationFormData.sizing
+    },
     rollcall: getRollcallStationsSnapshot(),
     session: {
       bearings: bearings.map(b => ({ ...b })),
@@ -3020,6 +3046,7 @@ async function hydrateActiveOperationFromServer() {
     if (!data?.active || !data?.operation) return false;
 
     currentSarOperation = { ...data.operation };
+    lastSarOperationMeta = { ...data.operation };
     updateOperationControls();
 
     const savedBearings = Array.isArray(data?.session?.bearings) ? data.session.bearings : [];
@@ -3202,6 +3229,7 @@ function setSarToggleValue(fieldId, value, btn) {
   wrap.querySelectorAll('.sar-toggle-btn').forEach(node => {
     node.classList.toggle('active', node === btn);
   });
+  scheduleOpActiveSync('operation-form-updated');
 }
 
 function submitSarOperation() {
@@ -3236,6 +3264,7 @@ function submitSarOperation() {
     mode: sarOperationMode,
     createdAt: new Date().toISOString()
   };
+  lastSarOperationMeta = { ...currentSarOperation };
 
   closeSarOperationOverlay();
   updateOperationControls();
@@ -3289,6 +3318,7 @@ function joinOperation() {
     joined: true,
     joinedAt: new Date().toISOString()
   };
+  lastSarOperationMeta = { ...currentSarOperation };
 
   updateOperationControls();
   notify(`🤝 Opération ${name} rejointe ✓`);
@@ -3302,6 +3332,11 @@ function closeOperation() {
   }
 
   const operationName = currentSarOperation?.name || 'sans nom';
+  lastSarOperationMeta = {
+    ...(currentSarOperation || {}),
+    active: false,
+    closedAt: new Date().toISOString()
+  };
   currentSarOperation = null;
   closeSarOperationOverlay();
   closeSarOfflineModal();
@@ -6566,8 +6601,16 @@ const sarOperationRefInput = document.getElementById('sarOperationRef');
 if (sarOperationRefInput) {
   sarOperationRefInput.addEventListener('input', () => {
     sarOperationRefInput.value = sarOperationRefInput.value.replace(/\D+/g, '').slice(0, 10);
+    scheduleOpActiveSync('operation-form-updated');
   });
 }
+
+['sarOperationName', 'sarOperationType', 'sarExercise', 'sarSizing'].forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('input', () => scheduleOpActiveSync('operation-form-updated'));
+  el.addEventListener('change', () => scheduleOpActiveSync('operation-form-updated'));
+});
 
 
 </script>
