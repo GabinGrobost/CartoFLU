@@ -81,6 +81,7 @@ Pour une utilisation sans internet (terrain, exercice isolé) :
 ```
 
 4. Dans CartoFLU, le fond sélectionné bascule automatiquement vers sa version `_local` si internet est indisponible.
+5. En mode connecté, si les cartes locales sont absentes, CartoFLU propose automatiquement de créer le répertoire et de télécharger un jeu initial de tuiles.
 
 ## Structure du dépôt
 
