@@ -2592,12 +2592,13 @@ const DEFAULT_STATION_COLOR = '#808080';
 let sidebarVisible = false;
 let idCounter = 0;
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   updateSidebarToggleButton();
   updateStationList();
   updateOperationControls();
   onCallsignInput(document.getElementById('callsign')?.value || '');
-  loadMemberListFromUrl();
+  await loadMemberListFromUrl();
+  await hydrateActiveOperationFromServer();
 });
 
 function normalizeCallsign(raw) {
@@ -2994,6 +2995,49 @@ window.addEventListener('beforeunload', () => {
   if (_opActiveSyncTimer) clearTimeout(_opActiveSyncTimer);
   flushOpActiveSync('beforeunload');
 });
+
+function restoreRollcallFromOpActive(stations = []) {
+  if (!Array.isArray(stations)) return;
+  stations.forEach(entry => {
+    const cs = normalizeCallsign(entry?.callsign || '');
+    if (!cs) return;
+    rollcallEnsureUnchecked(cs);
+    const cb = document.getElementById('rc-' + cs);
+    if (!cb) return;
+    cb.checked = !!entry.present;
+    if (entry.lastSeenAt) {
+      const t = Date.parse(entry.lastSeenAt);
+      if (!Number.isNaN(t)) lastSeen[cs] = t;
+    }
+  });
+}
+
+async function hydrateActiveOperationFromServer() {
+  try {
+    const resp = await fetch('op-active.json', { cache: 'no-store' });
+    if (!resp.ok) return false;
+    const data = await resp.json();
+    if (!data?.active || !data?.operation) return false;
+
+    currentSarOperation = { ...data.operation };
+    updateOperationControls();
+
+    const savedBearings = Array.isArray(data?.session?.bearings) ? data.session.bearings : [];
+    const savedNegListenings = Array.isArray(data?.session?.negListenings) ? data.session.negListenings : [];
+    if (savedBearings.length || savedNegListenings.length) {
+      restoreBearings(savedBearings, savedNegListenings);
+    }
+
+    restoreRollcallFromOpActive(data?.rollcall?.stations || []);
+    updateStationList();
+    notify(`📂 Opération ${currentSarOperation?.name || 'sans nom'} restaurée depuis op-active.json ✓`);
+    scheduleOpActiveSync('operation-restored');
+    return true;
+  } catch (e) {
+    console.warn('[CartoFLU] Restauration op-active.json impossible :', e);
+    return false;
+  }
+}
 
 function setElementDisplay(element, visible, displayValue = 'inline-flex') {
   if (!element) return;
