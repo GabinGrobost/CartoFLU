@@ -2593,7 +2593,6 @@ function applyRuntimeConfig() {
   const aprsInput = document.getElementById('aprsApiKey');
   if (aprsInput && runtimeConfig.aprsApiKey) {
     aprsInput.value = runtimeConfig.aprsApiKey;
-    localStorage.setItem('cartoflu_aprs_key', runtimeConfig.aprsApiKey);
   }
 
   maintenanceMode = !!runtimeConfig.maintenance;
@@ -2977,6 +2976,13 @@ function getBaliseSnapshot() {
   return { lat: p.lat, lon: p.lng };
 }
 
+function removeBaliseMarker(syncSource = 'balise-removed') {
+  if (!balisMarker) return;
+  balisMarker.remove();
+  balisMarker = null;
+  scheduleOpActiveSync(syncSource);
+}
+
 function buildOpActivePayload(source = 'ui') {
   const operationForm = getSarOperationFormSnapshot();
   const { hasAnyValue, ...operationFormData } = operationForm;
@@ -3066,6 +3072,30 @@ function restoreRollcallFromOpActive(stations = []) {
   });
 }
 
+function restoreBaliseFromOpActive(savedBalise) {
+  if (!savedBalise || typeof savedBalise !== 'object') {
+    removeBaliseMarker('balise-cleared-on-restore');
+    return;
+  }
+  const lat = Number(savedBalise.lat);
+  const lon = Number(savedBalise.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+  const previousType = document.getElementById('bearingType')?.value || 'STATION';
+  const previousLat = document.getElementById('lat')?.value || '';
+  const previousLon = document.getElementById('lon')?.value || '';
+  syncAllFormats(lat, lon, null);
+  const typeSelect = document.getElementById('bearingType');
+  if (typeSelect) typeSelect.value = 'BALISE';
+  addBearing();
+  if (typeSelect) typeSelect.value = previousType;
+  const prevLatNum = parseFloat(previousLat);
+  const prevLonNum = parseFloat(previousLon);
+  if (Number.isFinite(prevLatNum) && Number.isFinite(prevLonNum)) {
+    syncAllFormats(prevLatNum, prevLonNum, null);
+  }
+}
+
 async function hydrateActiveOperationFromServer() {
   try {
     const resp = await fetch('op-active.json', { cache: 'no-store' });
@@ -3082,6 +3112,7 @@ async function hydrateActiveOperationFromServer() {
     if (savedBearings.length || savedNegListenings.length) {
       restoreBearings(savedBearings, savedNegListenings);
     }
+    restoreBaliseFromOpActive(data?.session?.balise || null);
 
     restoreRollcallFromOpActive(data?.rollcall?.stations || []);
     updateStationList();
@@ -3478,7 +3509,7 @@ document.addEventListener('click', e => {
 function getRollcallPresentStations() {
   return Array.from(
     document.querySelectorAll('.rollcall-station input[type="checkbox"]:checked')
-  ).map(cb => cb.value.toUpperCase()).filter(Boolean);
+  ).map(cb => cb.value.toUpperCase()).filter(cs => !!cs && cs !== 'BALISE');
 }
 
 function syncAprsCallsignsField() {
@@ -4651,7 +4682,7 @@ function addBearing() {
           ${timestamp.replace('T',' ')}
         </div>
         <div style="margin-top:8px">
-          <button onclick="if(balisMarker){balisMarker.remove();balisMarker=null;}map.closePopup();"
+          <button onclick="removeBaliseMarker(); map.closePopup();"
             style="width:100%;padding:4px;background:rgba(255,45,85,0.15);
             border:1px solid #ff2d55;border-radius:4px;color:#ff2d55;
             font-family:'Rajdhani',sans-serif;font-weight:700;font-size:12px;cursor:pointer;">
@@ -4666,13 +4697,14 @@ function addBearing() {
         <div class="popup-title" style="color:#ff2d55">✚ BALISE — Position fox</div>
         <div class="popup-meta">Lat : ${p.lat.toFixed(4)}<br>Lon : ${p.lng.toFixed(4)}</div>
         <div style="margin-top:8px">
-          <button onclick="if(balisMarker){balisMarker.remove();balisMarker=null;}map.closePopup();"
+          <button onclick="removeBaliseMarker(); map.closePopup();"
             style="width:100%;padding:4px;background:rgba(255,45,85,0.15);
             border:1px solid #ff2d55;border-radius:4px;color:#ff2d55;
             font-family:'Rajdhani',sans-serif;font-weight:700;font-size:12px;cursor:pointer;">
             🗑 Supprimer
           </button>
         </div>`);
+      scheduleOpActiveSync('balise-dragged');
     });
 
     // Nettoyage formulaire
@@ -5984,6 +6016,7 @@ let aprsHistory = {};       // callsign → [{lat,lon,time}]
 const aprsHidden = new Set(); // callsigns masqués
 let aprsTimer   = null;
 let aprsAutoStartRequested = true;
+let aprsLastErrorMessage = '';
 const CORS_PROXIES = [
   'https://corsproxy.io/?',
   'https://api.allorigins.win/raw?url=',
@@ -6021,24 +6054,21 @@ function onAprsApiKeyInput() {
     const key = document.getElementById('aprsApiKey')?.value.trim() || '';
     const status = document.getElementById('aprsKeyStatus');
     if (!key) {
-      localStorage.removeItem('cartoflu_aprs_key');
       try { await persistAprsKeyToConfig(''); } catch(e) { /* ignore */ }
       if (status) status.innerHTML = '<span style="color:var(--muted)">Clé vide</span>';
       return;
     }
-    localStorage.setItem('cartoflu_aprs_key', key);
     try {
       await persistAprsKeyToConfig(key);
-      if (status) status.innerHTML = '<span style="color:var(--green)">✓ Sauvegarde auto (navigateur + config.json)</span>';
+      if (status) status.innerHTML = '<span style="color:var(--green)">✓ Sauvegarde auto (config.json)</span>';
     } catch (e) {
-      if (status) status.innerHTML = '<span style="color:var(--accent2)">⚠ Sauvegardée navigateur uniquement</span>';
+      if (status) status.innerHTML = '<span style="color:var(--accent2)">⚠ Échec sauvegarde config.json</span>';
     }
   }, 250);
 }
 
 function loadAprsKey() {
-  const k = localStorage.getItem('cartoflu_aprs_key') || '';
-  if (k && !document.getElementById('aprsApiKey')?.value) document.getElementById('aprsApiKey').value = k;
+  const k = document.getElementById('aprsApiKey')?.value.trim() || '';
   const status = document.getElementById('aprsKeyStatus');
   if (status) status.innerHTML = k ? '<span style="color:var(--green)">✓ Chargée</span>' : '<span style="color:var(--muted)">Sauvegarde automatique</span>';
 }
@@ -6099,6 +6129,11 @@ async function aprsQueryOne(apiKey, base, timerangeParam) {
     });
     if (!resp.ok) return [];
     const data = await resp.json();
+    if (data?.result && data.result !== 'ok') {
+      aprsLastErrorMessage = data.description || data.found || `Erreur APRS.fi (${data.result})`;
+      return [];
+    }
+    aprsLastErrorMessage = '';
     return (data.result === 'ok' && data.entries) ? data.entries : [];
   } catch(e) {
     // Retry proxy CORS
@@ -6106,6 +6141,11 @@ async function aprsQueryOne(apiKey, base, timerangeParam) {
       const resp = await fetchWithCorsProxy(url);
       if (!resp.ok) return [];
       const data = await resp.json();
+      if (data?.result && data.result !== 'ok') {
+        aprsLastErrorMessage = data.description || data.found || `Erreur APRS.fi (${data.result})`;
+        return [];
+      }
+      aprsLastErrorMessage = '';
       return (data.result === 'ok' && data.entries) ? data.entries : [];
     } catch(e2) { return []; }
   }
@@ -6114,6 +6154,7 @@ async function aprsQueryOne(apiKey, base, timerangeParam) {
 async function doAprsQuery(apiKey, callsigns) {
   const statusEl = document.getElementById('aprsStatus');
   statusEl.innerHTML = `<span class="spinner"></span> Interrogation APRS.fi… (${callsigns.join(', ')})`;
+  aprsLastErrorMessage = '';
 
   const timerange      = parseInt(document.getElementById('aprsTimerange')?.value || 3600);
   const timerangeParam = timerange > 0 ? `&timerange=${timerange}` : '';
@@ -6127,6 +6168,10 @@ async function doAprsQuery(apiKey, callsigns) {
   if (allEntries.length === 0 && bases.length > 0) {
     const ts      = new Date().toLocaleTimeString('fr-FR');
     const hadData = Object.keys(aprsMarkers).length > 0;
+    if (aprsLastErrorMessage) {
+      statusEl.innerHTML = `<span style="color:var(--danger)">⚠ APRS.fi : ${aprsLastErrorMessage}</span>`;
+      return;
+    }
     statusEl.innerHTML = hadData
       ? `<span style="color:var(--accent2)">⚠ Réseau indisponible · données conservées · ${ts}</span>`
       : `<span style="color:var(--danger)">⚠ Impossible de joindre api.aprs.fi — réseau bloqué ?</span>`;
