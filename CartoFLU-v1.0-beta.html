@@ -145,6 +145,44 @@
   .header-op-btn:active {
     transform: translateY(1px);
   }
+  .operation-menu-btn {
+    position: relative;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+  }
+  #currentOperationLabel {
+    pointer-events: auto !important;
+    cursor: pointer !important;
+    opacity: 1 !important;
+    gap: 8px;
+  }
+  #currentOperationLabel .op-arrow {
+    font-size: 12px;
+    opacity: 0.9;
+  }
+  #currentOperationLabel.open .op-arrow {
+    transform: rotate(180deg);
+  }
+  #currentOperationDropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    display: none;
+    min-width: 100%;
+    background: rgba(12,14,28,0.98);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.45), 0 0 10px rgba(0,212,255,0.12);
+    z-index: 1200;
+    padding: 6px;
+  }
+  #currentOperationDropdown.open { display: block; }
+  #currentOperationDropdown #closeOperationBtn {
+    width: 100%;
+    justify-content: flex-start;
+    text-align: left;
+  }
 
   .uncertainty-sector {
     fill: url(#uncertaintyHatchPattern) !important;
@@ -1186,6 +1224,13 @@
   .aprs-age { font-family:'Share Tech Mono',monospace; font-size:10px; color:var(--muted); }
   .aprs-meta { font-family:'Share Tech Mono',monospace; font-size:10px; color:var(--muted); margin-top:3px; line-height:1.6; }
   .aprs-actions { display:flex; gap:5px; margin-top:6px; }
+  #tab-aprs.aprs-disabled {
+    opacity: 0.55;
+    filter: grayscale(0.35);
+  }
+  #tab-aprs.aprs-disabled .form-section {
+    border-color: rgba(255,255,255,0.08);
+  }
   .spinner { display:inline-block;width:10px;height:10px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
 
@@ -1632,8 +1677,15 @@
   <nav class="header-ops" aria-label="Menu des opérations">
     <button class="header-op-btn" id="openOperationBtn" type="button" onclick="openOperation()">Ouvrir une operation</button>
     <button class="header-op-btn" id="joinOperationBtn" type="button" onclick="joinOperation()">Rejoindre une operation</button>
-    <div class="header-op-btn" id="currentOperationLabel" style="display:none; cursor:default; pointer-events:none; opacity:0.9;" aria-disabled="true">Operation : —</div>
-    <button class="header-op-btn" id="closeOperationBtn" type="button" onclick="closeOperation()" style="display:none;">Cloturer l'operation</button>
+    <div class="operation-menu-btn" id="currentOperationMenu" style="display:none;">
+      <button class="header-op-btn" id="currentOperationLabel" type="button" onclick="toggleCurrentOperationMenu(event)" aria-expanded="false">
+        Operation : —
+        <span class="op-arrow">▾</span>
+      </button>
+      <div id="currentOperationDropdown">
+        <button class="header-op-btn" id="closeOperationBtn" type="button" onclick="closeOperation()">Cloturer l'operation</button>
+      </div>
+    </div>
     <div class="rollcall-btn" id="rollcallContainer" style="display:none;">
     <div id="rollcallToggle" class="header-op-btn" onclick="toggleRollcall()">
       📋 APPEL
@@ -2013,7 +2065,7 @@
           L'API APRS.fi utilisée ici retourne la dernière position (<code>what=loc</code>). Le tracé se construit à chaque rafraîchissement.
         </div>
         <div style="display:flex;gap:6px;margin-top:6px">
-          <button class="btn btn-primary" style="flex:1" onclick="fetchAprs()">📡 INTERROGER</button>
+          <button class="btn btn-primary" id="aprsFetchBtn" style="flex:1" onclick="fetchAprs()">📡 INTERROGER</button>
           <button class="btn btn-secondary" onclick="stopAprs()" id="aprsStopBtn" style="display:none">⏹ Stop</button>
         </div>
       </div>
@@ -2898,6 +2950,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   onCallsignInput(document.getElementById('callsign')?.value || '');
   await loadMemberListFromUrl();
   await hydrateActiveOperationFromServer();
+  await flushPendingOpActiveSync('startup');
 });
 
 function normalizeCallsign(raw) {
@@ -3201,9 +3254,11 @@ let initialInternetAccessCheckPromise = null;
 let currentSarOperation = null;
 let lastSarOperationMeta = null;
 const OP_ACTIVE_ENDPOINT = 'save-op-active.php';
+const OP_ACTIVE_PENDING_KEY = 'cartoflu.op_active.pending_payload';
 let _opActiveSyncTimer = null;
 let _opActiveSyncInFlight = false;
 let _opActiveLastPayload = '';
+let _opActiveRetryTimer = null;
 
 function hasActiveOperation() {
   return !!currentSarOperation;
@@ -3313,8 +3368,51 @@ async function flushOpActiveSync(source = 'ui') {
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     _opActiveLastPayload = payloadText;
+    localStorage.removeItem(OP_ACTIVE_PENDING_KEY);
+    if (_opActiveRetryTimer) {
+      clearTimeout(_opActiveRetryTimer);
+      _opActiveRetryTimer = null;
+    }
   } catch (e) {
+    localStorage.setItem(OP_ACTIVE_PENDING_KEY, payloadText);
+    if (!_opActiveRetryTimer) {
+      _opActiveRetryTimer = setTimeout(() => {
+        _opActiveRetryTimer = null;
+        flushOpActiveSync('retry-after-failure');
+      }, 3000);
+    }
     console.warn('[CartoFLU] Sync op-active.json impossible :', e);
+  } finally {
+    _opActiveSyncInFlight = false;
+  }
+}
+
+async function flushPendingOpActiveSync(source = 'pending-retry') {
+  const pendingPayloadText = localStorage.getItem(OP_ACTIVE_PENDING_KEY);
+  if (!pendingPayloadText || _opActiveSyncInFlight) return;
+  _opActiveSyncInFlight = true;
+  try {
+    const resp = await fetch(OP_ACTIVE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: pendingPayloadText,
+      keepalive: true
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    _opActiveLastPayload = pendingPayloadText;
+    localStorage.removeItem(OP_ACTIVE_PENDING_KEY);
+    if (_opActiveRetryTimer) {
+      clearTimeout(_opActiveRetryTimer);
+      _opActiveRetryTimer = null;
+    }
+  } catch (e) {
+    if (!_opActiveRetryTimer) {
+      _opActiveRetryTimer = setTimeout(() => {
+        _opActiveRetryTimer = null;
+        flushPendingOpActiveSync('pending-retry-timer');
+      }, 3000);
+    }
+    console.warn(`[CartoFLU] Reprise sync op-active.json (${source}) impossible :`, e);
   } finally {
     _opActiveSyncInFlight = false;
   }
@@ -3331,6 +3429,10 @@ function scheduleOpActiveSync(source = 'ui') {
 window.addEventListener('beforeunload', () => {
   if (_opActiveSyncTimer) clearTimeout(_opActiveSyncTimer);
   flushOpActiveSync('beforeunload');
+});
+
+window.addEventListener('online', () => {
+  flushPendingOpActiveSync('browser-online');
 });
 
 function restoreRollcallFromOpActive(stations = []) {
@@ -3415,11 +3517,40 @@ function getCurrentOperationLabelText(operation) {
   return `${isExercise ? 'Exercice ' : ''}${type} : ${ref}`;
 }
 
+function isAprsUnavailableInCurrentMode() {
+  return !!(currentSarOperation && currentSarOperation.mode === 'degraded');
+}
+
+function applyAprsAvailabilityState() {
+  const aprsPanel = document.getElementById('tab-aprs');
+  const aprsStatus = document.getElementById('aprsStatus');
+  const disabled = isAprsUnavailableInCurrentMode();
+  const controlIds = ['aprsApiKey', 'aprsRefresh', 'aprsShowTrail', 'aprsTimerange', 'aprsFetchBtn', 'aprsStopBtn'];
+
+  if (aprsPanel) aprsPanel.classList.toggle('aprs-disabled', disabled);
+  controlIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  });
+
+  if (disabled) {
+    stopAprs(false);
+    clearAprsMarkers();
+    if (aprsStatus) {
+      aprsStatus.innerHTML = `<span style="color:var(--accent2)">⚠ Service APRS indisponible en mode dégradé (hors ligne)</span>`;
+    }
+  } else if (aprsStatus && !aprsStatus.textContent.trim()) {
+    aprsStatus.textContent = "En attente d'interrogation…";
+  }
+}
+
 function updateOperationControls() {
   const openBtn = document.getElementById('openOperationBtn');
   const joinBtn = document.getElementById('joinOperationBtn');
   const closeBtn = document.getElementById('closeOperationBtn');
   const operationLabel = document.getElementById('currentOperationLabel');
+  const operationMenu = document.getElementById('currentOperationMenu');
+  const operationDropdown = document.getElementById('currentOperationDropdown');
   const rollcallContainer = document.getElementById('rollcallContainer');
   const releveBtn = document.getElementById('toggleReleveBtn');
   const operationActive = hasActiveOperation();
@@ -3429,22 +3560,25 @@ function updateOperationControls() {
 
   setElementDisplay(openBtn, !operationActive);
   setElementDisplay(joinBtn, !operationActive);
+  setElementDisplay(operationMenu, operationActive, 'inline-flex');
   setElementDisplay(closeBtn, operationActive);
-  setElementDisplay(operationLabel, operationActive);
+  setElementDisplay(operationLabel, operationActive, 'inline-flex');
   setElementDisplay(rollcallContainer, operationActive, 'inline-flex');
   setElementDisplay(releveBtn, operationActive);
 
   if (operationLabel) {
-    operationLabel.textContent = operationActive
-      ? operationText
-      : 'Operation : —';
+    operationLabel.innerHTML = `${operationActive ? operationText : 'Operation : —'}<span class="op-arrow">▾</span>`;
+    operationLabel.setAttribute('aria-expanded', 'false');
   }
 
   if (!operationActive) {
+    operationDropdown?.classList.remove('open');
+    operationLabel?.classList.remove('open');
     document.getElementById('rollcallDropdown')?.classList.remove('open');
     document.getElementById('rollcallToggle')?.classList.remove('open');
     closeMapContextMenu();
   }
+  applyAprsAvailabilityState();
 }
 
 function setOpenOperationBusy(isBusy) {
@@ -3676,8 +3810,10 @@ function submitSarOperation() {
 
   closeSarOperationOverlay();
   updateOperationControls();
+  showRollcallReminderBanner();
   notify(`📂 Opération ${name} ouverte en ${sarOperationMode === 'degraded' ? 'mode dégradé' : 'mode connecté'} ✓`);
   scheduleOpActiveSync('operation-opened');
+  flushOpActiveSync('operation-opened-immediate');
 }
 
 async function openOperation() {
@@ -3798,10 +3934,29 @@ function toggleRollcall() {
   if (!btn || !dd) return;
   const open = dd.classList.toggle('open');
   btn.classList.toggle('open', open);
+  document.getElementById('currentOperationDropdown')?.classList.remove('open');
+  document.getElementById('currentOperationLabel')?.classList.remove('open');
+  document.getElementById('currentOperationLabel')?.setAttribute('aria-expanded', 'false');
+  closePcMenu();
+}
+
+function toggleCurrentOperationMenu(event) {
+  event?.stopPropagation();
+  const btn = document.getElementById('currentOperationLabel');
+  const dd = document.getElementById('currentOperationDropdown');
+  if (!btn || !dd || !hasActiveOperation()) return;
+  const open = dd.classList.toggle('open');
+  btn.classList.toggle('open', open);
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
   closePcMenu();
 }
 
 document.addEventListener('click', e => {
+  if (!e.target.closest('.operation-menu-btn')) {
+    document.getElementById('currentOperationDropdown')?.classList.remove('open');
+    document.getElementById('currentOperationLabel')?.classList.remove('open');
+    document.getElementById('currentOperationLabel')?.setAttribute('aria-expanded', 'false');
+  }
   if (!e.target.closest('.rollcall-btn')) {
     document.getElementById('rollcallDropdown')?.classList.remove('open');
     document.getElementById('rollcallToggle')?.classList.remove('open');
@@ -3816,6 +3971,9 @@ function togglePcMenu() {
   const dd  = document.getElementById('pcMenuDropdown');
   const open = dd.classList.toggle('open');
   btn.classList.toggle('open', open);
+  document.getElementById('currentOperationDropdown')?.classList.remove('open');
+  document.getElementById('currentOperationLabel')?.classList.remove('open');
+  document.getElementById('currentOperationLabel')?.setAttribute('aria-expanded', 'false');
   document.getElementById('rollcallDropdown')?.classList.remove('open');
   document.getElementById('rollcallToggle')?.classList.remove('open');
 }
@@ -5120,7 +5278,6 @@ function addBearing() {
 
   drawBearing(item);
   renderList();
-  switchTab('list');
   // Stopper le clignotement et supprimer l'ancien tracé en édition
   stopEditingBlink();
   window._editingOriginal = null;
@@ -5134,6 +5291,7 @@ function addBearing() {
   document.getElementById('notes').value = '';
   document.getElementById('bearing').value = '';
   clearBearingPreview();
+  if (sidebarVisible) toggleSidebar();
   writeSaveFile(true);
   scheduleOpActiveSync('bearing-added');
 }
@@ -6401,6 +6559,7 @@ async function persistAprsKeyToConfig(key) {
 }
 
 function onAprsApiKeyInput() {
+  if (isAprsUnavailableInCurrentMode()) return;
   if (_aprsKeySaveTimer) clearTimeout(_aprsKeySaveTimer);
   _aprsKeySaveTimer = setTimeout(async () => {
     const key = document.getElementById('aprsApiKey')?.value.trim() || '';
@@ -6426,6 +6585,7 @@ function loadAprsKey() {
 }
 
 async function tryAutoStartAprs() {
+  if (isAprsUnavailableInCurrentMode()) return;
   if (!aprsAutoStartRequested || aprsTimer) return;
   const apiKey = document.getElementById('aprsApiKey')?.value.trim();
   const callsigns = getAprsTrackedBaseCallsigns();
@@ -6452,6 +6612,10 @@ function qrkToWeight(qrk) {
 }
 
 async function fetchAprs() {
+  if (isAprsUnavailableInCurrentMode()) {
+    notify('⚠ APRS indisponible en mode dégradé (hors ligne)', true);
+    return;
+  }
   const apiKey     = document.getElementById('aprsApiKey').value.trim();
   const callsigns  = getAprsTrackedBaseCallsigns();
   const refreshSec = parseInt(document.getElementById('aprsRefresh').value);
@@ -6873,10 +7037,9 @@ function clearAprsMarkers() {
   aprsMarkers = {}; aprsTrails = {}; aprsHistory = {};
 }
 
-// Charger la clé sauvegardée au démarrage
-window.addEventListener('load', () => {
-  loadAprsKey();
-  setTimeout(() => { tryAutoStartAprs(); }, 400);
+function showRollcallReminderBanner() {
+  const existingBanner = document.getElementById('welcomeBannerAppel');
+  if (existingBanner) existingBanner.remove();
   const bannerAppel = document.createElement('div');
   bannerAppel.id = 'welcomeBannerAppel';
   bannerAppel.style.cssText = `
@@ -6894,6 +7057,12 @@ window.addEventListener('load', () => {
       border-radius:4px;font-size:12px;cursor:pointer;">✕</button>
   `;
   document.body.appendChild(bannerAppel);
+}
+
+// Charger la clé sauvegardée au démarrage
+window.addEventListener('load', () => {
+  loadAprsKey();
+  setTimeout(() => { tryAutoStartAprs(); }, 400);
 });
 
 // ─── SAUVEGARDE FICHIER (File System Access API) ──────────────────────────────
