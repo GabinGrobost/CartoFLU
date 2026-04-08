@@ -3373,12 +3373,12 @@ function removeBaliseMarker(syncSource = 'balise-removed') {
 function buildOpActivePayload(source = 'ui') {
   if (isArchivedReadOnlyOperation()) return null;
   const operationForm = getSarOperationFormSnapshot();
-  const { hasAnyValue, ...operationFormData } = operationForm;
+  const { ...operationFormData } = operationForm;
   const operation = currentSarOperation
     ? { ...currentSarOperation }
-    : (hasAnyValue
-      ? { ...operationFormData, draft: true }
-      : (lastSarOperationMeta ? { ...lastSarOperationMeta } : null));
+    : (source.startsWith('operation-closed') && lastSarOperationMeta
+      ? { ...lastSarOperationMeta }
+      : null);
 
   return {
     version: 1,
