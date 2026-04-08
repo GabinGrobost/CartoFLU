@@ -1,81 +1,88 @@
-# SAR+ based on CartoFLU 🦊📡
+# SAR+ (Based on CartoFLU) 🦊📡
 
-**Application web de radiogoniométrie pour la recherche de balise**  
-Développée par SWL2506 / Gabin Grobost / ADRASEC 25 (Doubs) (SAR+ Developper)
-
----
-
-## Présentation
-
-SAR+ est une application **Autonome** permettant de gérer une opération de radiogoniométrie en temps réel. Elle a été conçue pour les exercices et interventions de recherche de balise de détresse organisés par les ADRASEC.
-
-Elle fonctionne via une SAR BOX, avec un serveur back-end facultatif. Une simple connexion internet suffit pour charger les tuiles cartographiques (mode hors-ligne également disponible).
+**Application web de radiogoniométrie pour opérations SAR, optimisée pour une SAR BOX (mini-serveur portable).**
 
 ---
 
-## Fonctionnalités principales
+## Vue d'ensemble
 
-### 🗺️ Cartographie & Relevés
-- Carte interactive basée sur **Leaflet.js**
-- Saisie de relevés azimutaux par station
-- Calcul et affichage des **intersections** des lignes de gisement
-- Marqueurs de station personnalisés avec couleur unique par indicatif
-- **Écoute négative** : marqueur dédié (oreille barrée) désactivant les champs azimut
-- Marqueur **BALISE**  avec croix rouge permanente
-- Menu contextuel clic-droit pour positionner une station directement sur la carte
-- Marqueurs flèches déplaçables par glisser-déposer
+**SAR+ / SAR PLUS** permet de piloter une recherche de balise en temps réel :
+- saisie des azimuts par station,
+- visualisation cartographique des gisements,
+- estimation du point d'intersection,
+- suivi d'équipe (appel nominal + watchdog),
+- persistance locale des opérations.
 
-### 📋 Appel nominal (Roll Call)
-- Gestion d'un tableau de stations actives
-- **Watchdog timer** configurable par station avec alertes visuelles
-- Gestion des départs et alertes de non-réponse
-- Entrée **BALISE** représentant la position de la balise
-
-### 📡 Intégration APRS
-- Affichage des stations APRS sur la carte
-- Indicatif + temps écoulé depuis la dernière trame
-- Masquage individuel de stations avec liste triée des indicatifs cachés
-- Panneau APRS masquable
-
-### 💾 Sauvegarde 
-- **Autosauvegarde** configurable (15 s / 30 s / 1 min / 5 min)
-- Export/Import de sessions au format JSON
-- Export/Import de sessions au format csv
-
-### 🗂️ Gestion des indicatifs
-- Autocomplétion native via `<datalist>` alimentée par un fichier `callsign_list.txt`
-- Couleurs uniques automatiquement assignées à chaque indicatif
-
-### 🌐 Mode hors-ligne
-- Serveur de tuiles local via script Python + lanceur `.bat`
-- Basemap **"📴 Local (hors ligne)"** disponible dans le sélecteur de fonds de carte
+Le projet fonctionne en **mode autonome** (intranet SAR BOX) et reste exploitable en environnement réseau dégradé.
 
 ---
 
-## Utilisation
+## Fonctionnalités confirmées dans le code
 
-### Prérequis
-- Navigateur moderne (Chrome ou Edge — recommandé)
-- Connexion internet pour les tuiles en ligne (ou serveur local pour le mode hors-ligne)
+### Cartographie & relèvements
+- Carte Leaflet avec changement de fond de carte.
+- Ajout de stations et relèvements azimutaux.
+- Calcul d'intersection affiché (coordonnées + indicateur d'erreur).
+- Ajout d'une balise via menu contextuel.
 
-### Démarrage rapide
+### Gestion opérationnelle
+- Appel nominal (rollcall) avec indicateurs de présence.
+- Watchdog par station avec alertes visuelles.
+- Sauvegarde d'opération active dans `op-active.json`.
+- Archivage d'opérations clôturées dans `op-inactive.json`.
 
-1. **Télécharger** le fichier `CartoFLU.html`
-2. **L'ouvrir** dans votre navigateur (double-clic ou glisser dans le navigateur)
-3. *(Optionnel)* Charger un fichier `callsign_list.txt` pour l'autocomplétion des indicatifs
+### APRS & configuration
+- Intégration APRS.fi via clé API.
+- Sauvegarde de configuration via `save-config.php` vers `config.json`.
 
-C'est tout. Aucune installation requise.
+### Hors-ligne
+- Bascule vers tuiles locales si indisponibilité réseau.
+- Préparation / téléchargement de tuiles locales via `prepare-local-basemap.php`.
+- Service local de tuiles via batch Windows `serveur_tuiles_configure.bat`.
 
-### Mode hors-ligne (tuiles locales)
+---
 
-Pour une utilisation sans internet (terrain, exercice isolé) :
+## Arborescence utile
 
-1. Télécharger les tuiles OSM localement, avec Mobile Atlas Créator par exemple
-2. Lancer `serveur_tuiles.bat` (à placer à la racine du dossier des tuiles) — démarre un serveur Python sur `localhost:8080`
-3. Configurer `config.json` avec la clé HASH IGN (pour fonds protégés SCAN/OACI/Cartes) et les URL de tuiles locales par fond:
+```text
+.
+├── CartoFLU-v1.0-beta.html      # Interface principale SAR+
+├── config.json                  # Configuration runtime
+├── save-config.php              # API de sauvegarde config
+├── save-op-active.php           # API de sauvegarde opération active
+├── prepare-local-basemap.php    # API de préchargement tuiles locales
+├── op-active.json               # État opération en cours
+├── op-inactive.json             # Historique opérations clôturées
+├── member-list.json             # Données membres/stations
+├── serveur_tuiles_configure.bat # Service tuiles local (Windows)
+└── README.md
+```
+
+---
+
+## Déploiement recommandé sur SAR BOX
+
+1. Déposer le dépôt sur la SAR BOX.
+2. Servir le dossier via un serveur web local (Apache/Nginx/PHP embarqué).
+3. Vérifier les droits d'écriture pour :
+   - `config.json`
+   - `op-active.json`
+   - `op-inactive.json`
+4. Ouvrir `CartoFLU-v1.0-beta.html` depuis les postes opérateurs.
+
+---
+
+## Configuration minimale
+
+### 1) APRS
+Renseigner la clé APRS.fi dans l'interface, puis sauvegarder (écrit dans `config.json`).
+
+### 2) Fonds de carte hors-ligne (optionnel)
+Configurer dans `config.json` les URL locales et paramètres de zone/zoom.
+
+Exemple :
 
 ```json
-"ignscan25-hash-key": "votre_cle_hash_cartes_gouv_fr",
 "local-basemap-urls": {
   "ignplan_local": "http://localhost:8080/ignplan_local/{z}/{x}/{y}.png"
 },
@@ -86,72 +93,30 @@ Pour une utilisation sans internet (terrain, exercice isolé) :
 }
 ```
 
-4. Dans CartoFLU, le fond sélectionné bascule automatiquement vers sa version `_local` si internet est indisponible.
-5. En mode connecté, si les cartes locales sont absentes, CartoFLU propose automatiquement de créer le répertoire et de télécharger **tout le fond** selon `local-basemap-download` (zone + niveaux de zoom).
+---
 
-## Structure du dépôt
+## API locales (PHP)
 
-```
-CartoFLU/
-├── CartoFLU.html              # Application principale (fichier unique)
-├── callsign_list-example.txt  # Exemple de liste d'indicatifs
-├── serveur_tuiles.bat            # Serveur de tuiles hors-ligne
-└── README.md
-```
+- `POST /save-config.php` : enregistre la configuration applicative.
+- `POST /save-op-active.php` : enregistre l'opération active et archive les opérations clôturées.
+- `POST /prepare-local-basemap.php` : crée/remplit le cache de tuiles locales.
+
+> Important : ces endpoints nécessitent un serveur web avec PHP activé.
 
 ---
 
-## Captures d'écran
+## Licence (non libre)
 
-*(À venir — contributions bienvenues !)*
+Ce logiciel est distribué sous une **licence propriétaire restrictive** :
+- ✅ usage interne autorisé pour vos opérations SAR,
+- ❌ **commercialisation interdite**,
+- ❌ **modification, adaptation, fork et redistribution interdits**,
+- ❌ intégration dans une solution tierce sans autorisation écrite interdite.
 
----
-
-## Contribuer
-
-Les contributions sont les bienvenues, que vous soyez radioamateur, développeur ou membre d'une ADRASEC !
-
-
-### Signaler un bug ou proposer une idée
-
-Utilisez l'onglet **[Issues](../../issues)** du dépôt GitHub. Merci de préciser :
-- Votre navigateur et sa version
-- Les étapes pour reproduire le problème
-- Une capture d'écran si possible
-
-### Idées de contributions
-
-- Traductions (EN, DE...)
-- Support d'autres formats d'import/export (GPX, KML...)
-- Amélioration de l'algorithme d'intersection
-- Intégration d'autres sources APRS
-- Tests sur différents OS / navigateurs
-
----
-
-## Dépendances
-
-| Bibliothèque | Version | Rôle |
-|---|---|---|
-| [Leaflet.js](https://leafletjs.com/) | 1.9.x | Cartographie interactive |
-| CartoDB Voyager | — | Fond de carte par défaut |
-
-Toutes les dépendances sont chargées via CDN. Aucun `npm install` n'est nécessaire.
-
----
-
-## Licence
-
-Ce projet est distribué sous licence **GNU GPL v3**.  
-Voir le fichier `LICENSE` ou [gnu.org/licenses/gpl-3.0](https://www.gnu.org/licenses/gpl-3.0.html).
+Consulter le fichier `LICENSE` pour les termes complets.
 
 ---
 
 ## Contact
 
-**SWL2506** — ADRASEC 25 (Doubs, Bourgogne-Franche-Comté)  
-📧 
-
----
-
-*CartoFLU est un projet bénévole au service de la sécurité civile.*
+**SWL2506** — ADRASEC 25 (Doubs, Bourgogne-Franche-Comté)
