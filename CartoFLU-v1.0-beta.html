@@ -2819,8 +2819,13 @@ const zoomControl = L.control.zoom({ position: 'topleft' }).addTo(map);
 const scaleControl = L.control.scale({ position: 'bottomright', metric: true, imperial: false, maxWidth: 120 }).addTo(map);
 const attributionContainer = map.attributionControl?.getContainer?.();
 const scaleContainer = scaleControl?.getContainer?.();
-if (attributionContainer && scaleContainer && attributionContainer.parentNode === scaleContainer.parentNode) {
-  attributionContainer.parentNode.insertBefore(scaleContainer, attributionContainer);
+if (attributionContainer && scaleContainer) {
+  attributionContainer.style.display = 'flex';
+  attributionContainer.style.alignItems = 'center';
+  attributionContainer.style.gap = '6px';
+  scaleContainer.style.margin = '0';
+  scaleContainer.style.float = 'none';
+  attributionContainer.insertBefore(scaleContainer, attributionContainer.firstChild);
 }
 
 const mapToolbar = document.querySelector('.map-toolbar');
