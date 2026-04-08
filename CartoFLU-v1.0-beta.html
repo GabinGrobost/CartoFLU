@@ -1655,6 +1655,71 @@
     flex-wrap: wrap;
   }
 
+  .sar-archived-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: min(56vh, 460px);
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+
+  .sar-archived-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 8px;
+    background: rgba(0,0,0,0.18);
+    padding: 10px 12px;
+  }
+
+  .sar-archived-main {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .sar-archived-ref {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    letter-spacing: 1px;
+    color: var(--accent2);
+  }
+
+  .sar-archived-name {
+    margin-top: 2px;
+    font-size: 15px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sar-archived-meta {
+    margin-top: 2px;
+    font-size: 12px;
+    color: rgba(200,220,232,0.7);
+  }
+
+  .sar-archived-open-btn {
+    width: 42px;
+    height: 34px;
+    padding: 0;
+    margin-top: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 17px;
+  }
+
+  .sar-archived-empty {
+    text-align: center;
+    border: 1px dashed rgba(255,255,255,0.22);
+    border-radius: 8px;
+    padding: 16px;
+    color: rgba(200,220,232,0.8);
+  }
+
   @media (max-width: 760px) {
     .sar-operation-topbar {
       flex-wrap: wrap;
@@ -1682,6 +1747,7 @@
   <div style="font-family:'Share Tech Mono',monospace;font-size:11px;letter-spacing:2px;color:var(--accent);white-space:nowrap;"><span style="color:var(--accent2);">S</span>earch <span style="color:var(--accent2);">A</span>nd <span style="color:var(--accent2);">R</span>escue <span style="color:var(--accent2);">+</span></div>
   <nav class="header-ops" aria-label="Menu des opérations">
     <button class="header-op-btn" id="openOperationBtn" type="button" onclick="openOperation()">Ouvrir une operation</button>
+    <button class="header-op-btn" id="archivedOperationBtn" type="button" onclick="openArchivedOperationsModal()">Operation archivée</button>
     <button class="header-op-btn" id="joinOperationBtn" type="button" onclick="joinOperation()">Rejoindre une operation</button>
     <div class="operation-menu-btn" id="currentOperationMenu" style="display:none;">
       <button class="header-op-btn" id="currentOperationLabel" type="button" onclick="toggleCurrentOperationMenu(event)" aria-expanded="false">
@@ -2287,6 +2353,18 @@
     <div class="sar-modal-actions">
       <button type="button" class="btn btn-secondary" onclick="closeSarOfflineModal()">Non</button>
       <button type="button" class="btn btn-primary" style="width:auto;margin-top:0;" onclick="launchSarOperationDegraded()">Oui</button>
+    </div>
+  </div>
+</div>
+
+<div id="sarArchivedModal" class="sar-modal-overlay" aria-hidden="true">
+  <div class="sar-modal-box">
+    <div class="sar-modal-head">Opérations archivées</div>
+    <div class="sar-modal-body">
+      <div id="sarArchivedList" class="sar-archived-list"></div>
+    </div>
+    <div class="sar-modal-actions">
+      <button type="button" class="btn btn-secondary" onclick="closeArchivedOperationsModal()">Fermer</button>
     </div>
   </div>
 </div>
@@ -3619,6 +3697,7 @@ function applyAprsAvailabilityState() {
 
 function updateOperationControls() {
   const openBtn = document.getElementById('openOperationBtn');
+  const archivedBtn = document.getElementById('archivedOperationBtn');
   const joinBtn = document.getElementById('joinOperationBtn');
   const closeBtn = document.getElementById('closeOperationBtn');
   const operationLabel = document.getElementById('currentOperationLabel');
@@ -3632,12 +3711,13 @@ function updateOperationControls() {
     : '';
 
   setElementDisplay(openBtn, !operationActive);
+  setElementDisplay(archivedBtn, !operationActive);
   setElementDisplay(joinBtn, !operationActive);
   setElementDisplay(operationMenu, operationActive, 'inline-flex');
   setElementDisplay(closeBtn, operationActive);
   setElementDisplay(operationLabel, operationActive, 'inline-flex');
   setElementDisplay(rollcallContainer, operationActive, 'inline-flex');
-  setElementDisplay(releveBtn, operationActive);
+  setElementDisplay(releveBtn, operationActive && !isArchivedReadOnlyOperation());
 
   if (operationLabel) {
     operationLabel.innerHTML = `${operationActive ? operationText : 'Operation : —'}<span class="op-arrow">▾</span>`;
@@ -3645,6 +3725,7 @@ function updateOperationControls() {
   }
 
   if (!operationActive) {
+    closeArchivedOperationsModal();
     operationDropdown?.classList.remove('open');
     operationLabel?.classList.remove('open');
     document.getElementById('rollcallDropdown')?.classList.remove('open');
@@ -3814,6 +3895,15 @@ function computeNextOperationRef(_operationType = '', operations = []) {
   return `${prefix}${String(maxSeq + 1).padStart(4, '0')}`;
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 function getKnownOperationsForRefComputation() {
   const known = [];
   if (Array.isArray(_inactiveOperationsCache)) known.push(..._inactiveOperationsCache);
@@ -3881,6 +3971,98 @@ function closeSarOfflineModal() {
   if (!modal) return;
   modal.classList.remove('open');
   modal.setAttribute('aria-hidden', 'true');
+}
+
+function formatArchiveDate(isoValue) {
+  if (!isoValue) return 'Date inconnue';
+  const dt = new Date(isoValue);
+  if (Number.isNaN(dt.getTime())) return 'Date inconnue';
+  return dt.toLocaleString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+function closeArchivedOperationsModal() {
+  const modal = document.getElementById('sarArchivedModal');
+  if (!modal) return;
+  modal.classList.remove('open');
+  modal.setAttribute('aria-hidden', 'true');
+}
+
+async function openArchivedOperationsModal() {
+  if (maintenanceMode) {
+    notify('🛠 Mode maintenance actif : consultation des archives indisponible', true);
+    return;
+  }
+  if (hasActiveOperation()) {
+    notify('⚠ Clôturez l’opération en cours avant de consulter les archives', true);
+    return;
+  }
+
+  closePcMenu();
+  closeSarOperationOverlay();
+  closeSarOfflineModal();
+  closeArchivedOperationsModal();
+  const list = document.getElementById('sarArchivedList');
+  if (!list) return;
+
+  list.innerHTML = '<div class="sar-archived-empty">Chargement des opérations archivées…</div>';
+  const modal = document.getElementById('sarArchivedModal');
+  modal?.classList.add('open');
+  modal?.setAttribute('aria-hidden', 'false');
+
+  try {
+    const resp = await fetch(OP_INACTIVE_FILE, { cache: 'no-store' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const operations = Array.isArray(data?.operations) ? data.operations : [];
+    const archived = operations
+      .filter(op => /^\d{10}$/.test((op?.ref || '').trim()))
+      .sort((a, b) => {
+        const ta = Date.parse(a?.closedAt || a?.snapshot?.operation?.closedAt || 0) || 0;
+        const tb = Date.parse(b?.closedAt || b?.snapshot?.operation?.closedAt || 0) || 0;
+        return tb - ta;
+      });
+
+    if (!archived.length) {
+      list.innerHTML = '<div class="sar-archived-empty">Aucune opération archivée disponible.</div>';
+      return;
+    }
+
+    list.innerHTML = archived.map(op => {
+      const ref = (op?.ref || '').trim().toUpperCase();
+      const name = op?.name || `Opération ${ref}`;
+      const type = op?.type || 'Type non renseigné';
+      const closedAt = op?.closedAt || op?.snapshot?.operation?.closedAt || null;
+      const safeName = escapeHtml(name);
+      const safeType = escapeHtml(type);
+      return `<div class="sar-archived-row">
+        <div class="sar-archived-main">
+          <div class="sar-archived-ref">${ref}</div>
+          <div class="sar-archived-name">${safeName}</div>
+          <div class="sar-archived-meta">${safeType} · clôturée le ${formatArchiveDate(closedAt)}</div>
+        </div>
+        <button type="button" class="btn btn-secondary sar-archived-open-btn" title="Ouvrir en mode consultation" onclick="openArchivedOperationFromModal('${ref}')">👁</button>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    console.warn('[CartoFLU] Lecture op-inactive.json impossible :', e);
+    list.innerHTML = '<div class="sar-archived-empty">Impossible de charger la liste des archives.</div>';
+  }
+}
+
+async function openArchivedOperationFromModal(ref) {
+  closeArchivedOperationsModal();
+  const reopened = await openArchivedOperationByRef(ref);
+  if (!reopened) {
+    notify('⚠ Impossible d’ouvrir cette opération archivée', true);
+    return;
+  }
+  updateOperationControls();
 }
 
 function launchSarOperationDegraded() {
@@ -4021,43 +4203,8 @@ async function openArchivedOperationByRef(ref) {
 }
 
 async function joinOperation() {
-  if (maintenanceMode) {
-    notify('🛠 Mode maintenance actif : rejointure d’opération indisponible', true);
-    return;
-  }
   closePcMenu();
-  const currentName = currentSarOperation?.name || '';
-  const enteredName = window.prompt("Nom ou référence de l'opération à rejoindre :", currentName);
-  if (enteredName === null) return;
-
-  const name = enteredName.trim();
-  if (!name) {
-    notify("⚠ Renseignez le nom de l'opération à rejoindre", true);
-    return;
-  }
-
-  const reopenedArchive = await openArchivedOperationByRef(name);
-  if (reopenedArchive) {
-    updateOperationControls();
-    return;
-  }
-
-  currentSarOperation = {
-    name,
-    type: 'Operation rejointe',
-    exercise: 'non',
-    sizing: '',
-    openingAuthority: 'non',
-    openingAuthorityLabel: '',
-    mode: 'joined',
-    joined: true,
-    joinedAt: new Date().toISOString()
-  };
-  lastSarOperationMeta = { ...currentSarOperation };
-
-  updateOperationControls();
-  notify(`🤝 Opération ${name} rejointe ✓`);
-  scheduleOpActiveSync('operation-joined');
+  notify('ℹ️ "Rejoindre une opération" est réservé à une future interconnexion');
 }
 
 async function closeOperation() {
@@ -4076,6 +4223,7 @@ async function closeOperation() {
   currentSarOperation = null;
   closeSarOperationOverlay();
   closeSarOfflineModal();
+  closeArchivedOperationsModal();
   closePcMenu();
   closeMapContextMenu();
   updateOperationControls();
@@ -4181,6 +4329,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closeSarOfflineModal();
     closeSarOperationOverlay();
+    closeArchivedOperationsModal();
   }
 });
 
@@ -4192,6 +4341,10 @@ document.addEventListener('click', e => {
   const operationOverlay = document.getElementById('sarOperationOverlay');
   if (operationOverlay?.classList.contains('open') && e.target === operationOverlay) {
     closeSarOperationOverlay();
+  }
+  const archivedModal = document.getElementById('sarArchivedModal');
+  if (archivedModal?.classList.contains('open') && e.target === archivedModal) {
+    closeArchivedOperationsModal();
   }
 });
 
@@ -4631,8 +4784,11 @@ function closeMapContextMenu() {
 
 map.on('contextmenu', e => {
   L.DomEvent.preventDefault(e.originalEvent);
-  if (!hasActiveOperation()) {
+  if (!hasActiveOperation() || isArchivedReadOnlyOperation()) {
     closeMapContextMenu();
+    if (isArchivedReadOnlyOperation()) {
+      notify('👁 Mode consultation : clic droit indisponible', true);
+    }
     return;
   }
 
@@ -5305,6 +5461,10 @@ function getCoords() {
 }
 
 function addBearing() {
+  if (isArchivedReadOnlyOperation()) {
+    notify('👁 Mode consultation : ajout de relevés indisponible', true);
+    return;
+  }
   const { lat, lon } = getCoords();
   const bearingType = normalizeCallsign(document.getElementById('bearingType')?.value || 'STATION');
   const callsign = bearingType === 'BALISE'
