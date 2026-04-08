@@ -1,4 +1,4 @@
-# SAR+ (Based on CartoFLU) 🦊📡
+# SAR+ Software 📡
 
 **Application web de radiogoniométrie pour opérations SAR, optimisée pour une SAR BOX (mini-serveur portable).**
 
@@ -6,7 +6,7 @@
 
 ## Vue d'ensemble
 
-**SAR+ / SAR PLUS** permet de piloter une recherche de balise en temps réel :
+**SAR+ Software** permet de piloter une recherche de balise en temps réel :
 - saisie des azimuts par station,
 - visualisation cartographique des gisements,
 - estimation du point d'intersection,
@@ -75,7 +75,7 @@ Le projet fonctionne en **mode autonome** (intranet SAR BOX) et reste exploitabl
 ## Configuration minimale
 
 ### 1) APRS
-Renseigner la clé APRS.fi dans l'interface, puis sauvegarder (écrit dans `config.json`).
+Renseigner la clé APRS.fi dans l'interface, puis sauvegarder.
 
 ### 2) Fonds de carte hors-ligne (optionnel)
 Configurer dans `config.json` les URL locales et paramètres de zone/zoom.
