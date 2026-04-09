@@ -1911,7 +1911,6 @@
     <div class="initial-splash-title">Rescue <span class="initial-splash-plus">+</span></div>
     <div class="initial-splash-footer">
       <div class="initial-splash-sub">BETA EDITION v1.0</div>
-      <div class="initial-splash-loading">Chargement...</div>
     </div>
     <div class="initial-splash-progress" aria-hidden="true">
       <div class="initial-splash-progress-bar" id="initialSplashProgressBar"></div>
