@@ -30,6 +30,7 @@
 <title>SAR+ — ADRASEC 25</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&display=swap');
@@ -4275,24 +4276,47 @@ function buildTemplateReplacements(rowsSource, operation = {}, presentCallsigns 
   return replacements;
 }
 
-function applyTemplateReplacements(workbook, replacements = {}) {
-  workbook.SheetNames.forEach(name => {
-    const ws = workbook.Sheets[name];
-    if (!ws || !ws['!ref']) return;
-    const range = XLSX.utils.decode_range(ws['!ref']);
-    for (let r = range.s.r; r <= range.e.r; r += 1) {
-      for (let c = range.s.c; c <= range.e.c; c += 1) {
-        const cellRef = XLSX.utils.encode_cell({ r, c });
-        const cell = ws[cellRef];
-        if (!cell || typeof cell.v !== 'string' || !cell.v.includes('[')) continue;
-        let replaced = cell.v;
-        Object.entries(replacements).forEach(([token, value]) => {
-          if (replaced.includes(token)) replaced = replaced.split(token).join(value);
-        });
-        if (replaced !== cell.v) cell.v = replaced;
-      }
-    }
+function escapeXmlText(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function triggerDownloadBlob(blob, fileName) {
+  const a = document.createElement('a');
+  const href = URL.createObjectURL(blob);
+  a.href = href;
+  a.download = fileName;
+  a.click();
+  URL.revokeObjectURL(href);
+}
+
+async function exportTemplateWorkbookWithReplacements(templateArrayBuffer, replacements = {}, fileName = 'export.xlsx') {
+  if (typeof JSZip === 'undefined') {
+    throw new Error('JSZip library unavailable');
+  }
+  const zip = await JSZip.loadAsync(templateArrayBuffer);
+  const replacementEntries = Object.entries(replacements).map(([token, value]) => [token, escapeXmlText(value)]);
+  const targetFiles = Object.keys(zip.files).filter(name =>
+    name === 'xl/sharedStrings.xml' || (name.startsWith('xl/worksheets/') && name.endsWith('.xml'))
+  );
+  for (const fileNameInZip of targetFiles) {
+    const file = zip.file(fileNameInZip);
+    if (!file) continue;
+    let xml = await file.async('string');
+    replacementEntries.forEach(([token, value]) => {
+      if (xml.includes(token)) xml = xml.split(token).join(value);
+    });
+    zip.file(fileNameInZip, xml);
+  }
+  const outBlob = await zip.generateAsync({
+    type: 'blob',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
   });
+  triggerDownloadBlob(outBlob, fileName);
 }
 
 async function exportRowsAsXlsx(rowsSource, fileName, sheetName = 'Releves', opts = {}) {
@@ -4306,15 +4330,13 @@ async function exportRowsAsXlsx(rowsSource, fileName, sheetName = 'Releves', opt
       const templateResp = await fetch(templateUrl, { cache: 'no-store' });
       if (templateResp.ok) {
         const buf = await templateResp.arrayBuffer();
-        const templateWb = XLSX.read(buf, { type: 'array' });
         const replacements = buildTemplateReplacements(
           rowsSource,
           opts?.operation || {},
           opts?.presentCallsigns || [],
           { closedAt: opts?.closedAt || null }
         );
-        applyTemplateReplacements(templateWb, replacements);
-        XLSX.writeFile(templateWb, fileName);
+        await exportTemplateWorkbookWithReplacements(buf, replacements, fileName);
         return;
       }
     } catch (err) {
