@@ -61,6 +61,51 @@
     overflow: hidden;
   }
 
+  #initialSplash {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg, #22252b 0%, #1f2126 100%);
+    transition: opacity .45s ease, visibility .45s ease;
+  }
+  #initialSplash.hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .initial-splash-content {
+    width: min(92vw, 1080px);
+    color: #ececec;
+    padding: 24px 18px;
+    font-family: 'Rajdhani', sans-serif;
+  }
+  .initial-splash-title {
+    font-size: clamp(64px, 12vw, 190px);
+    line-height: 0.95;
+    font-style: italic;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #d9d9dc;
+    text-shadow: 0 6px 16px rgba(0,0,0,0.32);
+  }
+  .initial-splash-plus {
+    color: #ff6b35;
+    display: inline-block;
+    transform: translateY(2px);
+  }
+  .initial-splash-sub {
+    margin-top: 6px;
+    font-size: clamp(24px, 4.8vw, 58px);
+    line-height: 1;
+    font-style: italic;
+    font-weight: 700;
+    color: #f1f1f1;
+    letter-spacing: 1.2px;
+  }
+
   /* HEADER */
   header {
     background: var(--panel);
@@ -1777,6 +1822,13 @@
 </style>
 </head>
 <body>
+<div id="initialSplash" role="status" aria-live="polite" aria-label="Chargement de l'application">
+  <div class="initial-splash-content">
+    <div class="initial-splash-title">Search And</div>
+    <div class="initial-splash-title">Rescue <span class="initial-splash-plus">+</span></div>
+    <div class="initial-splash-sub">BETA EDITION v1.0</div>
+  </div>
+</div>
 
 <header>
   <div class="logo">SAR<span>+</span></div>
@@ -7903,6 +7955,16 @@ document.getElementById('sarSizing')?.addEventListener('change', () => {
 });
 
 updateOpeningAuthorityUi();
+
+const _initialSplashStartedAt = Date.now();
+window.addEventListener('load', () => {
+  const splash = document.getElementById('initialSplash');
+  if (!splash) return;
+  const minDisplayMs = 1100;
+  const elapsed = Date.now() - _initialSplashStartedAt;
+  const delay = Math.max(0, minDisplayMs - elapsed);
+  setTimeout(() => splash.classList.add('hidden'), delay);
+});
 
 
 </script>
