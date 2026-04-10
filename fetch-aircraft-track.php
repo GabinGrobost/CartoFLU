@@ -369,6 +369,25 @@ $response = [
         'fallback' => 'opensky-network',
         'icao24' => $icao24,
     ],
+    'callsign' => strtoupper(trim((string)($adsbAircraft['flight'] ?? $adsbAircraft['callsign'] ?? ''))),
+    'altitude' => $adsbAircraft['alt_baro'] ?? $adsbAircraft['alt_geom'] ?? $adsbAircraft['altitude'] ?? null,
+    'speed' => $adsbAircraft['gs'] ?? $adsbAircraft['tas'] ?? $adsbAircraft['ias'] ?? $adsbAircraft['speed'] ?? null,
+    'heading' => $adsbAircraft['track'] ?? $adsbAircraft['heading'] ?? $adsbAircraft['hdg'] ?? null,
+    'squawk' => $adsbAircraft['squawk'] ?? null,
+    'aircraftType' => strtoupper(trim((string)($adsbAircraft['t'] ?? $adsbAircraft['type'] ?? ''))),
+    'aircraftDescription' => trim((string)($adsbAircraft['desc'] ?? $adsbAircraft['aircraft'] ?? '')),
+    'aircraftCategory' => trim((string)($adsbAircraft['category'] ?? '')),
+    'operator' => trim((string)($adsbAircraft['ownOp'] ?? $adsbAircraft['operator'] ?? '')),
+    'origin' => strtoupper(trim((string)($adsbAircraft['from'] ?? $adsbAircraft['origin'] ?? ''))),
+    'destination' => strtoupper(trim((string)($adsbAircraft['to'] ?? $adsbAircraft['destination'] ?? ''))),
+    'meta' => [
+        'seen' => $adsbAircraft['seen'] ?? null,
+        'seen_pos' => $adsbAircraft['seen_pos'] ?? null,
+        'baro_rate' => $adsbAircraft['baro_rate'] ?? null,
+        'geom_rate' => $adsbAircraft['geom_rate'] ?? null,
+        'emergency' => $adsbAircraft['emergency'] ?? null,
+        'nav_qnh' => $adsbAircraft['nav_qnh'] ?? null,
+    ],
     'updatedAt' => gmdate('c')
 ];
 
