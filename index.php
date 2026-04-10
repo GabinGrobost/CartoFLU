@@ -2689,6 +2689,7 @@ let flightradarRefreshTimer = null;
 let currentFlightRadarState = null;
 let trackedAircraftBreadcrumbs = [];
 let trackedAircraftRegistration = "";
+let trackedAircraftPopupOpen = false;
 
 const BASEMAPS = {
   osm: {
@@ -4194,6 +4195,58 @@ function normalizeAircraftPoints(points = []) {
     .filter(Boolean);
 }
 
+function computeHeadingFromTrack(points = []) {
+  const normalized = normalizeTrackPoints(points);
+  if (normalized.length < 2) return null;
+  const a = normalized[normalized.length - 2];
+  const b = normalized[normalized.length - 1];
+  const lat1 = Number(a.lat) * Math.PI / 180;
+  const lat2 = Number(b.lat) * Math.PI / 180;
+  const dLon = (Number(b.lon) - Number(a.lon)) * Math.PI / 180;
+  const y = Math.sin(dLon) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+  const bearing = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+  return Number.isFinite(bearing) ? bearing : null;
+}
+
+function isRotorcraft(flightData = {}) {
+  const hints = [
+    flightData.aircraftType,
+    flightData.aircraftDescription,
+    flightData.aircraftCategory,
+    flightData.meta?.aircraftType,
+    flightData.meta?.aircraftDescription
+  ]
+    .map(v => String(v || '').toLowerCase())
+    .join(' ');
+  return /(heli|helico|hélico|rotor|rotary|ec\d{2,3}|as\d{2,3}|h1[0-9]{2}|r44|r66|bk117|aw\d{2,3})/.test(hints);
+}
+
+function formatFlightRadarPopupDetails(flightData = {}, normalizedReg = '', currentLat = null, currentLon = null) {
+  const details = [
+    ['Immatriculation', normalizedReg],
+    ['Vol', String(flightData.callsign || flightData.meta?.callsign || '').trim().toUpperCase()],
+    ['ICAO24', String(flightData.icao24 || flightData.meta?.icao24 || '').trim().toUpperCase()],
+    ['Type appareil', flightData.aircraftType || flightData.meta?.aircraftType || ''],
+    ['Description', flightData.aircraftDescription || flightData.meta?.aircraftDescription || ''],
+    ['Catégorie', flightData.aircraftCategory || ''],
+    ['Opérateur', flightData.operator || ''],
+    ['Origine', flightData.origin || ''],
+    ['Destination', flightData.destination || ''],
+    ['Squawk', flightData.squawk ?? flightData.meta?.squawk ?? ''],
+    ['Altitude', flightData.altitude ?? flightData.meta?.altitude ?? ''],
+    ['Vitesse', flightData.speed ?? flightData.meta?.speed ?? ''],
+    ['Cap', flightData.heading ?? flightData.meta?.heading ?? ''],
+    ['Position', Number.isFinite(currentLat) && Number.isFinite(currentLon) ? `${currentLat.toFixed(5)}, ${currentLon.toFixed(5)}` : ''],
+    ['Source', flightData.source?.primary || flightData.meta?.source || ''],
+    ['Màj', flightData.updatedAt || '']
+  ];
+  return details
+    .filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== '')
+    .map(([label, value]) => `<div><strong>${escapeHtml(label)} :</strong> ${escapeHtml(String(value))}</div>`)
+    .join('');
+}
+
 function clearFlightRadarOverlay() {
   flightradarLayer.clearLayers();
 }
@@ -4221,6 +4274,21 @@ function normalizeFlightRadarSnapshot(snapshot = {}) {
     currentPosition: Number.isFinite(cpLat) && Number.isFinite(cpLon) ? { lat: cpLat, lon: cpLon } : null,
     lastKnownPosition: Number.isFinite(lkLat) && Number.isFinite(lkLon) ? { lat: lkLat, lon: lkLon } : null,
     allAircraft,
+    callsign: String(snapshot.callsign || '').trim().toUpperCase(),
+    icao24: String(snapshot.icao24 || '').trim().toLowerCase(),
+    altitude: snapshot.altitude ?? null,
+    speed: snapshot.speed ?? null,
+    heading: snapshot.heading ?? null,
+    squawk: snapshot.squawk ?? null,
+    aircraftType: snapshot.aircraftType || '',
+    aircraftDescription: snapshot.aircraftDescription || '',
+    aircraftCategory: snapshot.aircraftCategory || '',
+    operator: snapshot.operator || '',
+    origin: snapshot.origin || '',
+    destination: snapshot.destination || '',
+    source: snapshot.source || null,
+    meta: snapshot.meta || null,
+    popupOpen: !!snapshot.popupOpen,
     updatedAt: snapshot.updatedAt || new Date().toISOString()
   };
 }
@@ -4264,10 +4332,12 @@ function stopFlightRadarTracking() {
   currentFlightRadarState = null;
   trackedAircraftBreadcrumbs = [];
   trackedAircraftRegistration = '';
+  trackedAircraftPopupOpen = false;
   clearFlightRadarOverlay();
 }
 
 function drawFlightRadarOverlay(flightData = {}, registration = '') {
+  const hadPopupOpen = trackedAircraftPopupOpen || !!currentFlightRadarState?.popupOpen || !!flightData.popupOpen;
   clearFlightRadarOverlay();
   const planned = normalizeTrackPoints(flightData.plannedTrack || flightData.route || flightData.flightPlan || []);
   const projected = normalizeTrackPoints(flightData.futureTrack || flightData.projectedTrack || []);
@@ -4316,35 +4386,31 @@ function drawFlightRadarOverlay(flightData = {}, registration = '') {
   const currentLon = Number(currentPosition?.lon ?? currentPosition?.lng ?? currentPosition?.longitude);
   const popupCallsign = String(flightData.callsign || flightData.meta?.callsign || '').trim().toUpperCase();
   const popupIcao24 = String(flightData.icao24 || flightData.meta?.icao24 || '').trim().toLowerCase();
-  const popupSource = flightData.source?.primary || flightData.meta?.source || '';
   const popupAltitude = flightData.altitude ?? flightData.meta?.altitude ?? null;
   const popupSpeed = flightData.speed ?? flightData.meta?.speed ?? null;
   const popupHeading = flightData.heading ?? flightData.meta?.heading ?? null;
-  const popupUpdatedAt = flightData.updatedAt || '';
+  const iconHeading = popupHeading ?? computeHeadingFromTrack(persistedTrail) ?? computeHeadingFromTrack(past) ?? computeHeadingFromTrack(current) ?? 0;
+  const iconGlyph = isRotorcraft(flightData) ? '🚁' : '✈';
+  const popupRows = formatFlightRadarPopupDetails(flightData, normalizedReg, currentLat, currentLon);
   const popupBody = `
-    <div class="popup-title">✈ ${escapeHtml(normalizedReg || 'Appareil')}</div>
+    <div class="popup-title">${escapeHtml(iconGlyph)} ${escapeHtml(normalizedReg || 'Appareil')}</div>
     <div style="margin-top:6px;line-height:1.45">
-      ${popupCallsign ? `<div><strong>Vol :</strong> ${escapeHtml(popupCallsign)}</div>` : ''}
-      ${popupIcao24 ? `<div><strong>ICAO24 :</strong> ${escapeHtml(popupIcao24.toUpperCase())}</div>` : ''}
-      ${popupAltitude !== null && popupAltitude !== '' ? `<div><strong>Altitude :</strong> ${escapeHtml(String(popupAltitude))}</div>` : ''}
-      ${popupSpeed !== null && popupSpeed !== '' ? `<div><strong>Vitesse :</strong> ${escapeHtml(String(popupSpeed))}</div>` : ''}
-      ${popupHeading !== null && popupHeading !== '' ? `<div><strong>Cap :</strong> ${escapeHtml(String(popupHeading))}</div>` : ''}
-      ${Number.isFinite(currentLat) && Number.isFinite(currentLon) ? `<div><strong>Position :</strong> ${currentLat.toFixed(5)}, ${currentLon.toFixed(5)}</div>` : ''}
-      ${popupSource ? `<div><strong>Source :</strong> ${escapeHtml(String(popupSource))}</div>` : ''}
-      ${popupUpdatedAt ? `<div><strong>Màj :</strong> ${escapeHtml(String(popupUpdatedAt))}</div>` : ''}
+      ${popupRows}
     </div>`;
 
   if (!radarLost && Number.isFinite(currentLat) && Number.isFinite(currentLon)) {
     const planeIcon = L.divIcon({
       className: 'plane-blip-icon',
-      html: '<div style="font-size:20px;line-height:1;filter:drop-shadow(0 0 2px #000)">✈</div>',
+      html: `<div style="font-size:20px;line-height:1;filter:drop-shadow(0 0 2px #000);display:inline-block;transform:rotate(${Number(iconHeading).toFixed(1)}deg);transform-origin:center center;">${escapeHtml(iconGlyph)}</div>`,
       iconSize: [22, 22],
       iconAnchor: [11, 11]
     });
     const trackedMarker = L.marker([currentLat, currentLon], { icon: planeIcon })
       .bindPopup(popupBody, { minWidth: 220 })
       .addTo(flightradarLayer);
-    if (flightData.popupOpen) trackedMarker.openPopup();
+    trackedMarker.on('popupopen', () => { trackedAircraftPopupOpen = true; });
+    trackedMarker.on('popupclose', () => { trackedAircraftPopupOpen = false; });
+    if (hadPopupOpen) trackedMarker.openPopup();
   }
 
   if (radarLost) {
@@ -4372,6 +4438,14 @@ function drawFlightRadarOverlay(flightData = {}, registration = '') {
     heading: popupHeading,
     source: flightData.source || null,
     meta: flightData.meta || null,
+    squawk: flightData.squawk ?? null,
+    aircraftType: flightData.aircraftType || '',
+    aircraftDescription: flightData.aircraftDescription || '',
+    aircraftCategory: flightData.aircraftCategory || '',
+    operator: flightData.operator || '',
+    origin: flightData.origin || '',
+    destination: flightData.destination || '',
+    popupOpen: hadPopupOpen,
     plannedTrack: planned,
     pastTrack: past,
     currentTrack: current,
@@ -4405,6 +4479,13 @@ function normalizeFlightradarResponse(raw = {}) {
     altitude: data?.altitude ?? data?.meta?.altitude ?? null,
     speed: data?.speed ?? data?.meta?.speed ?? null,
     heading: data?.heading ?? data?.meta?.heading ?? null,
+    squawk: data?.squawk ?? data?.meta?.squawk ?? null,
+    aircraftType: data?.aircraftType ?? data?.meta?.aircraftType ?? '',
+    aircraftDescription: data?.aircraftDescription ?? data?.meta?.aircraftDescription ?? '',
+    aircraftCategory: data?.aircraftCategory ?? '',
+    operator: data?.operator ?? '',
+    origin: data?.origin ?? '',
+    destination: data?.destination ?? '',
     source: data?.source || null,
     meta: data?.meta && typeof data.meta === 'object' ? data.meta : null,
     updatedAt: data?.updatedAt || new Date().toISOString()
@@ -4514,7 +4595,7 @@ function startFlightRadarTracking() {
   refreshFlightRadarTracking();
   const isMonoAircraftTracking = !runtimeConfig.showAllAircraft && !!String(currentSarOperation?.aircraftRegistration || '').trim();
   const refreshMs = isMonoAircraftTracking
-    ? Math.max(5000, Math.min(12000, Number(runtimeConfig.flightradar24RefreshMs) || 8000))
+    ? Math.max(300, Math.min(1000, Number(runtimeConfig.flightradar24RefreshMs) || 1000))
     : (runtimeConfig.flightradar24RefreshMs || 45000);
   flightradarRefreshTimer = setInterval(() => {
     refreshFlightRadarTracking();
