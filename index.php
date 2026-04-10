@@ -4470,13 +4470,11 @@ async function openOperation() {
       await openSarOperationOverlay('connected');
     } else {
       notify('⚠ Accès internet indisponible', true);
-      await switchToOfflineBasemap(currentBasemapKey);
       openSarOfflineModal();
     }
   } catch (e) {
     lastInternetAccessStatus = false;
     notify('⚠ Test réseau impossible, proposition du mode dégradé', true);
-    await switchToOfflineBasemap(currentBasemapKey);
     openSarOfflineModal();
   } finally {
     sarOperationCheckInFlight = false;
