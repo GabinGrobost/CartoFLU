@@ -4247,7 +4247,8 @@ function stopFlightRadarTracking() {
 
 function drawFlightRadarOverlay(flightData = {}, registration = '') {
   clearFlightRadarOverlay();
-  const planned = normalizeTrackPoints(flightData.plannedTrack || flightData.route || []);
+  const planned = normalizeTrackPoints(flightData.plannedTrack || flightData.route || flightData.flightPlan || []);
+  const projected = normalizeTrackPoints(flightData.futureTrack || flightData.projectedTrack || []);
   const past = normalizeTrackPoints(flightData.pastTrack || flightData.trail || []);
   const current = normalizeTrackPoints(flightData.currentTrack || flightData.futureTrack || []);
   const breadcrumbTrail = normalizeTrackPoints(flightData.breadcrumbTrail || flightData.trackedAircraftBreadcrumbs || []);
@@ -4271,12 +4272,13 @@ function drawFlightRadarOverlay(flightData = {}, registration = '') {
   }
 
   const normalizedReg = String(registration || '').trim().toUpperCase();
+  const monoPlannedTrack = !allAircraft.length && planned.length < 2 ? projected : planned;
   const persistedTrail = (!allAircraft.length && normalizedReg && trackedAircraftRegistration === normalizedReg)
     ? mergeTrackPoints(breadcrumbTrail, trackedAircraftBreadcrumbs)
     : breadcrumbTrail;
 
-  if (planned.length >= 2) {
-    L.polyline(planned, { color: '#6cb2ff', weight: 2.5, dashArray: '8 6', opacity: 0.85 }).addTo(flightradarLayer);
+  if (!allAircraft.length && monoPlannedTrack.length >= 2) {
+    L.polyline(monoPlannedTrack, { color: '#001f54', weight: 2.5, dashArray: '10 6', opacity: 0.9 }).addTo(flightradarLayer);
   }
   if (past.length >= 2) {
     L.polyline(past, { color: '#ff0000', weight: 3, opacity: 0.9 }).addTo(flightradarLayer);
