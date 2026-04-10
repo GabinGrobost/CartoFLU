@@ -4326,7 +4326,8 @@ async function refreshFlightRadarTracking() {
       }
       drawFlightRadarOverlay(allData, 'TOUS LES AVIONS');
     } catch (e) {
-      console.warn('[CartoFLU] Snapshot ADSB indisponible :', e);
+      console.warn('[CartoFLU] Snapshot ADSB/OpenSky indisponible :', e);
+      notify('⚠ Impossible de charger le snapshot global des avions', true);
     }
     return;
   }

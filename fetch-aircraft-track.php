@@ -129,11 +129,42 @@ function normalize_all_aircraft(array $payload, int $limit = 250): array
     return $out;
 }
 
+
+function normalize_opensky_states(array $payload, int $limit = 300): array
+{
+    if (!isset($payload['states']) || !is_array($payload['states'])) return [];
+    $out = [];
+    foreach ($payload['states'] as $state) {
+        if (!is_array($state)) continue;
+        $lon = isset($state[5]) ? (float)$state[5] : NAN;
+        $lat = isset($state[6]) ? (float)$state[6] : NAN;
+        if (!is_finite($lat) || !is_finite($lon)) continue;
+        $out[] = [
+            'lat' => $lat,
+            'lon' => $lon,
+            'registration' => '',
+            'icao24' => strtolower(trim((string)($state[0] ?? ''))),
+            'callsign' => strtoupper(trim((string)($state[1] ?? ''))),
+        ];
+        if (count($out) >= $limit) break;
+    }
+    return $out;
+}
+
 if ($allAircraft) {
     $snapshot = http_get_json('https://api.adsb.lol/v2/snapshot', 10);
-    if (!$snapshot) {
+    $all = is_array($snapshot) ? normalize_all_aircraft($snapshot, 300) : [];
+    $source = 'adsb.lol';
+
+    if ($all === []) {
+        $opensky = http_get_json('https://opensky-network.org/api/states/all', 10);
+        $all = is_array($opensky) ? normalize_opensky_states($opensky, 300) : [];
+        $source = 'opensky-network';
+    }
+
+    if ($all === []) {
         http_response_code(502);
-        echo json_encode(['ok' => false, 'error' => 'Unable to fetch ADSB snapshot'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        echo json_encode(['ok' => false, 'error' => 'Unable to fetch global aircraft snapshot'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         exit;
     }
 
@@ -144,9 +175,9 @@ if ($allAircraft) {
         'currentPosition' => null,
         'radarLost' => false,
         'lastKnownPosition' => null,
-        'allAircraft' => normalize_all_aircraft($snapshot, 300),
+        'allAircraft' => $all,
         'source' => [
-            'primary' => 'adsb.lol',
+            'primary' => $source,
             'mode' => 'snapshot'
         ],
         'updatedAt' => gmdate('c')
