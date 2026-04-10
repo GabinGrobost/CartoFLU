@@ -2242,12 +2242,6 @@
       </div>
 
       <div class="form-section">
-        <h3>// Export</h3>
-        <button class="btn btn-secondary" style="width:100%;margin-bottom:6px" onclick="exportJSON()">📥 Exporter JSON</button>
-        <button class="btn btn-secondary" style="width:100%" onclick="exportXLSX()">📥 Exporter XLSX</button>
-      </div>
-
-      <div class="form-section">
         <h3>// Filtrage des stations</h3>
         <div class="form-group">
           <div style="display:none;" aria-hidden="true">
@@ -2367,8 +2361,8 @@
     </div>
 <div class="commune-search-overlay">
   <div class="commune-search-wrap">
-    <input id="communeInput" type="text" placeholder="Rechercher..."
-      title="Rechercher un lieu ou un LOCATOR Maidenhead"
+    <input id="communeInput" type="text" placeholder="Rechercher lieu / LOCATOR / OACI / DFCI..."
+      title="Rechercher un lieu, un LOCATOR Maidenhead, un code OACI ou un code DFCI"
       oninput="handleCommuneInputEvent()"
       onkeydown="if(event.key==='Enter'){event.preventDefault();handleCommuneEnter()}"
       onblur="setTimeout(()=>hideCommuneSuggestions(),200)"
@@ -2650,6 +2644,12 @@ function ensureFoxSearchPattern() {
   defs.appendChild(pattern);
 }
 ensureFoxSearchPattern();
+
+const DFCI_SEARCH_AREA = 3601403916; // France métropolitaine / relation overpass
+let dfciPreviewLayer = null;
+let dfciPreviewPopup = null;
+const dfciMarkedLayer = L.layerGroup().addTo(map);
+let dfciMarkedZones = [];
 
 const BASEMAPS = {
   osm: {
@@ -3670,7 +3670,8 @@ function buildOpActivePayload(source = 'ui') {
       bearings: bearings.map(b => ({ ...b })),
       negListenings: negListenings.map(n => ({ ...n })),
       balise: getBaliseSnapshot(),
-      intersection: intersectionState ? { ...intersectionState } : null
+      intersection: intersectionState ? { ...intersectionState } : null,
+      dfciZones: dfciMarkedZones.map(z => ({ code: z.code, latlngs: z.latlngs }))
     },
     sync: {
       source,
@@ -3809,6 +3810,53 @@ function restoreBaliseFromOpActive(savedBalise) {
   }
 }
 
+function clearDfciPreview() {
+  if (dfciPreviewLayer) {
+    dfciPreviewLayer.remove();
+    dfciPreviewLayer = null;
+  }
+  if (dfciPreviewPopup) {
+    map.closePopup(dfciPreviewPopup);
+    dfciPreviewPopup = null;
+  }
+}
+
+function clearDfciMarkedZones(syncSource = 'dfci-cleared') {
+  dfciMarkedLayer.clearLayers();
+  dfciMarkedZones = [];
+  scheduleOpActiveSync(syncSource);
+}
+
+function drawDfciZoneOnMap(zone, options = {}) {
+  const isPreview = !!options.preview;
+  const polygon = L.polygon(zone.latlngs, {
+    color: '#ff3b30',
+    weight: isPreview ? 2 : 3,
+    fillOpacity: isPreview ? 0.08 : 0.12,
+    dashArray: isPreview ? '8 6' : '6 6',
+    lineCap: 'round',
+    lineJoin: 'round'
+  });
+  polygon.bindPopup(`<div class="popup-title" style="color:#ff6b6b">🧭 Zone DFCI ${zone.code}</div>`);
+  polygon.addTo(isPreview ? map : dfciMarkedLayer);
+  return polygon;
+}
+
+function restoreDfciZonesFromOpActive(savedZones = []) {
+  clearDfciPreview();
+  dfciMarkedLayer.clearLayers();
+  if (!Array.isArray(savedZones)) {
+    dfciMarkedZones = [];
+    return;
+  }
+
+  dfciMarkedZones = savedZones
+    .filter(z => z && typeof z.code === 'string' && Array.isArray(z.latlngs))
+    .map(z => ({ code: z.code, latlngs: z.latlngs }));
+
+  dfciMarkedZones.forEach(zone => drawDfciZoneOnMap(zone));
+}
+
 function hydrateOperationFromPayload(data, sourceLabel = 'op-active.json', options = {}) {
   const { allowInactive = false, readOnly = false } = options;
   if (!data?.operation) return false;
@@ -3822,6 +3870,7 @@ function hydrateOperationFromPayload(data, sourceLabel = 'op-active.json', optio
   const savedNegListenings = Array.isArray(data?.session?.negListenings) ? data.session.negListenings : [];
   restoreBearings(savedBearings, savedNegListenings);
   restoreBaliseFromOpActive(data?.session?.balise || null);
+  restoreDfciZonesFromOpActive(data?.session?.dfciZones || []);
 
   restoreRollcallFromOpActive(data?.rollcall?.stations || []);
   updateStationList();
@@ -6975,6 +7024,102 @@ function handleCommuneEnter() {
   return goToCommune();
 }
 
+function normalizeOaciInput(val) {
+  return (val || '').trim().toUpperCase();
+}
+
+function isValidOaciCode(val) {
+  return /^[A-Z]{4}$/.test(normalizeOaciInput(val));
+}
+
+function normalizeDfciInput(val) {
+  return (val || '').trim().toUpperCase().replace(/[\s-]/g, '');
+}
+
+function isLikelyDfciCode(val) {
+  const cleaned = normalizeDfciInput(val);
+  return /^[A-Z]{2,4}[0-9]{2,6}[A-Z]?$/.test(cleaned);
+}
+
+async function fetchOaciSuggestions(code) {
+  const q = `${code} aerodrome france`;
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&countrycodes=fr&limit=5&format=json&addressdetails=1`;
+  const resp = await fetch(url, { headers: { 'Accept-Language': 'fr' } });
+  const results = await resp.json();
+  return results.map(r => ({ ...r, isOaci: true, oaciCode: code }));
+}
+
+async function fetchDfciZones(code) {
+  const query = `
+[out:json][timeout:20];
+(
+  way["ref:dfci"="${code}"](area:${DFCI_SEARCH_AREA});
+  relation["ref:dfci"="${code}"](area:${DFCI_SEARCH_AREA});
+  way["dfci"="${code}"](area:${DFCI_SEARCH_AREA});
+  relation["dfci"="${code}"](area:${DFCI_SEARCH_AREA});
+);
+out geom;`;
+
+  const resp = await fetch('https://overpass-api.de/api/interpreter', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+    body: query
+  });
+  const data = await resp.json();
+  const elements = Array.isArray(data?.elements) ? data.elements : [];
+
+  return elements
+    .filter(el => Array.isArray(el?.geometry) && el.geometry.length >= 3)
+    .map(el => ({
+      code,
+      latlngs: el.geometry.map(pt => [Number(pt.lat), Number(pt.lon)]).filter(pt => Number.isFinite(pt[0]) && Number.isFinite(pt[1]))
+    }))
+    .filter(z => z.latlngs.length >= 3);
+}
+
+function promptDfciMarking(zone) {
+  clearDfciPreview();
+  dfciPreviewLayer = drawDfciZoneOnMap(zone, { preview: true });
+  map.fitBounds(dfciPreviewLayer.getBounds(), { padding: [26, 26], maxZoom: 15 });
+
+  const center = dfciPreviewLayer.getBounds().getCenter();
+  const content = document.createElement('div');
+  content.innerHTML = `
+    <div class="popup-title" style="color:#ff6b6b">🧭 Zone DFCI ${zone.code}</div>
+    <div class="popup-meta" style="margin-top:6px">Ajouter le marquage de cette zone à la carte ?</div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <button id="dfciAddYes" class="btn btn-primary" type="button" style="width:auto;margin-top:0">Oui</button>
+      <button id="dfciAddNo" class="btn btn-secondary" type="button" style="width:auto;margin-top:0">Non</button>
+    </div>
+  `;
+
+  dfciPreviewPopup = L.popup({ closeOnClick: false, autoClose: false })
+    .setLatLng(center)
+    .setContent(content)
+    .openOn(map);
+
+  setTimeout(() => {
+    const yesBtn = document.getElementById('dfciAddYes');
+    const noBtn = document.getElementById('dfciAddNo');
+
+    if (yesBtn) {
+      yesBtn.addEventListener('click', () => {
+        clearDfciPreview();
+        drawDfciZoneOnMap(zone);
+        dfciMarkedZones.push({ code: zone.code, latlngs: zone.latlngs });
+        scheduleOpActiveSync('dfci-zone-added');
+        notify(`🧭 Zone DFCI ${zone.code} ajoutée à la carte ✓`);
+      }, { once: true });
+    }
+    if (noBtn) {
+      noBtn.addEventListener('click', () => {
+        clearDfciPreview();
+        notify('Marquage DFCI annulé');
+      }, { once: true });
+    }
+  }, 0);
+}
+
 
 // ─── RECHERCHE COMMUNE (Nominatim / OSM) ─────────────────────────────────────
 let _communeTimer = null;
@@ -6982,6 +7127,8 @@ let _communeTimer = null;
 async function onCommuneInput() {
   const val = document.getElementById('communeInput').value.trim();
   const locatorSuggestion = buildLocatorSearchResult(val);
+  const oaciCode = normalizeOaciInput(val);
+  const dfciCode = normalizeDfciInput(val);
 
   if (!val) {
     hideCommuneSuggestions();
@@ -6991,6 +7138,18 @@ async function onCommuneInput() {
   if (locatorSuggestion) {
     clearTimeout(_communeTimer);
     showCommuneSuggestions([locatorSuggestion]);
+    return;
+  }
+
+  if (isValidOaciCode(oaciCode)) {
+    clearTimeout(_communeTimer);
+    showCommuneSuggestions([{ isSpecialSearch: true, kind: 'oaci', code: oaciCode }]);
+    return;
+  }
+
+  if (isLikelyDfciCode(dfciCode)) {
+    clearTimeout(_communeTimer);
+    showCommuneSuggestions([{ isSpecialSearch: true, kind: 'dfci', code: dfciCode }]);
     return;
   }
 
@@ -7098,6 +7257,20 @@ function showCommuneSuggestions(results) {
       </div>`;
     }
 
+    if (r.isSpecialSearch) {
+      const icon = r.kind === 'oaci' ? '🛩️' : '🧭';
+      const label = r.kind === 'oaci' ? `Rechercher code OACI ${r.code}` : `Rechercher zone DFCI ${r.code}`;
+      return `<div data-idx="${i}"
+        style="padding:7px 12px;font-family:'Rajdhani',sans-serif;cursor:pointer;
+        border-bottom:1px solid #2a3448;transition:background .15s;"
+        onmouseover="this.style.background='rgba(255,107,53,0.12)'"
+        onmouseout="this.style.background='transparent'"
+      >
+        <div style="font-size:13px;font-weight:700;color:var(--accent2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${icon} ${label}</div>
+        <div style="font-size:11px;color:#6a8a9a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Validation par Entrée ou clic</div>
+      </div>`;
+    }
+
     const parts = r.display_name.split(',').map(s => s.trim());
     const nom = parts[0];
     const dept = parts.slice(1, 3).join(', ');
@@ -7125,6 +7298,12 @@ function showCommuneSuggestions(results) {
         return;
       }
 
+      if (r.isSpecialSearch) {
+        document.getElementById('communeInput').value = r.code;
+        goToCommune();
+        return;
+      }
+
       document.getElementById('communeInput').value = r.display_name.split(',')[0];
       centerOnCommune(parseFloat(r.lat), parseFloat(r.lon), r.display_name);
     });
@@ -7142,14 +7321,42 @@ function hideCommuneSuggestions() {
 async function goToCommune() {
   const val = document.getElementById('communeInput').value.trim();
   const locator = normalizeLocatorInput(val);
+  const oaciCode = normalizeOaciInput(val);
+  const dfciCode = normalizeDfciInput(val);
 
-  if (!val) { notify('⚠ Entrez un nom de commune ou un LOCATOR', true); return; }
+  if (!val) { notify('⚠ Entrez un nom de commune, un LOCATOR, un code OACI ou DFCI', true); return; }
 
   if (locator.length <= 6 && isValidMaidenheadLocator(locator)) {
     const coords = maidenheadToLatLon(locator);
     if (coords) {
       document.getElementById('communeInput').value = locator;
       centerOnLocator(coords, locator);
+      return;
+    }
+  }
+
+  if (isValidOaciCode(oaciCode)) {
+    try {
+      const results = await fetchOaciSuggestions(oaciCode);
+      if (!results.length) { notify(`⚠ Code OACI introuvable : ${oaciCode}`, true); return; }
+      const r = results[0];
+      centerOnCommune(parseFloat(r.lat), parseFloat(r.lon), `Aérodrome ${oaciCode}`);
+      notify(`🛩️ OACI ${oaciCode} localisé ✓`);
+      return;
+    } catch (e) {
+      notify(`⚠ Recherche OACI impossible : ${e.message}`, true);
+      return;
+    }
+  }
+
+  if (isLikelyDfciCode(dfciCode)) {
+    try {
+      const zones = await fetchDfciZones(dfciCode);
+      if (!zones.length) { notify(`⚠ Zone DFCI introuvable : ${dfciCode}`, true); return; }
+      promptDfciMarking(zones[0]);
+      return;
+    } catch (e) {
+      notify(`⚠ Recherche DFCI impossible : ${e.message}`, true);
       return;
     }
   }
