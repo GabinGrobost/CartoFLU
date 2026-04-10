@@ -2990,6 +2990,49 @@ function buildLocalProbeUrl(localUrlTemplate) {
     .replace('{y}', String(tile.y));
 }
 
+function buildTileUrlFromTemplate(urlTemplate, z, x, y) {
+  if (!urlTemplate) return '';
+  return urlTemplate
+    .replace('{z}', String(z))
+    .replace('{x}', String(x))
+    .replace('{y}', String(y))
+    .replace('{s}', 'a');
+}
+
+function preloadTileImage(url) {
+  return new Promise(resolve => {
+    if (!url) return resolve(false);
+    const img = new Image();
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
+    img.src = `${url}${url.includes('?') ? '&' : '?'}_preload=${Date.now()}`;
+  });
+}
+
+async function prechargeInitialMapTiles() {
+  const select = document.getElementById('basemapSelect');
+  if (!select) return;
+  const keys = [...new Set([currentBasemapKey, ...Array.from(select.options).map(opt => opt.value)])];
+  const center = map.getCenter();
+  const z = Math.max(0, Math.min(18, map.getZoom() || 6));
+  const tile = latLngToTile(center.lat, center.lng, z);
+
+  for (const key of keys) {
+    if (IGN_HASH_PROTECTED_BASEMAPS.has(key)) continue;
+    let tileUrl = '';
+    const wmtsTpl = getOnlineSeedUrlTemplate(key);
+    if (wmtsTpl) {
+      tileUrl = buildTileUrlFromTemplate(wmtsTpl, tile.z, tile.x, tile.y);
+    } else {
+      const bm = BASEMAPS[key];
+      if (!bm || bm.type === 'wms' || bm.restricted) continue;
+      tileUrl = buildTileUrlFromTemplate(bm.url, tile.z, tile.x, tile.y);
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await preloadTileImage(tileUrl);
+  }
+}
+
 async function ensureLocalBasemapPrepared(key) {
   const localBasemapUrls = runtimeConfig.localBasemapUrls || {};
   const localUrlTemplate = (localBasemapUrls[`${key}_local`] || localBasemapUrls[key] || '').trim();
@@ -3079,6 +3122,9 @@ function createBasemapLayer(bm, key = '') {
 }
 
 let currentTileLayer = createBasemapLayer(resolveBasemap('osmorg') || BASEMAPS.osmorg, 'osmorg').addTo(map);
+setTimeout(() => {
+  prechargeInitialMapTiles();
+}, 350);
 
 async function changeBasemap(key) {
   ensureLocalBasemapPrepared(key);
