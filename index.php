@@ -4566,6 +4566,7 @@ function buildExportRows(rowsSource = []) {
     notes: b?.notes ?? ''
   }));
 }
+const EXPORT_COLUMNS = ['id', 'callsign', 'frequency', 'lat', 'lon', 'bearing', 'uncertainty', 'lineLength', 'color', 'notes'];
 
 async function exportTemplateWorkbookWithReplacements(templateArrayBuffer, replacements = {}, fileName = 'export.xlsx') {
   if (typeof JSZip === 'undefined') {
@@ -4619,7 +4620,7 @@ async function exportRowsAsXlsx(rowsSource, fileName, sheetName = 'Releves', opt
 
   const rows = buildExportRows(rowsSource);
   const worksheet = XLSX.utils.json_to_sheet(rows, {
-    header: ['id', 'callsign', 'frequency', 'lat', 'lon', 'bearing', 'uncertainty', 'lineLength', 'color', 'notes']
+    header: EXPORT_COLUMNS
   });
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
@@ -4670,31 +4671,32 @@ async function exportArchivedOperationXlsx(ref) {
   }
 }
 
-async function exportRowsAsPdf(rowsSource, fileName, title = 'Radiogonio - Relevés') {
+async function exportRowsAsPdf(rowsSource, fileName) {
   if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined') {
     throw new Error('jsPDF library unavailable');
   }
   const rows = buildExportRows(rowsSource);
-  const headers = ['#', 'Indicatif', 'Fréq', 'Lat', 'Lon', 'Azimut', '±', 'Long. km', 'Couleur', 'Notes'];
-  const body = rows.map(r => [r.id, r.callsign, r.frequency, r.lat, r.lon, r.bearing, r.uncertainty, r.lineLength, r.color, r.notes]);
-  const notesMax = body.reduce((max, row) => Math.max(max, String(row[9] || '').length), 0);
-  const landscape = body.length > 18 || notesMax > 36;
+  const body = rows.map(row => EXPORT_COLUMNS.map(key => row[key]));
+  const estimatedWidth = EXPORT_COLUMNS.reduce((sum, key, idx) => {
+    const maxLen = Math.max(
+      key.length,
+      ...body.map(r => String(r[idx] ?? '').length)
+    );
+    return sum + Math.min(34, maxLen);
+  }, 0);
+  const landscape = estimatedWidth > 120;
   const doc = new window.jspdf.jsPDF({
     orientation: landscape ? 'landscape' : 'portrait',
     unit: 'mm',
     format: 'a4'
   });
-  doc.setFontSize(12);
-  doc.text(title, 10, 10);
-  doc.setFontSize(9);
-  doc.text(`Export: ${new Date().toLocaleString('fr-FR')}`, 10, 15);
   doc.autoTable({
-    head: [headers],
+    head: [EXPORT_COLUMNS],
     body,
-    startY: 18,
+    startY: 8,
     styles: { fontSize: 8, cellPadding: 1.6 },
     headStyles: { fillColor: [52, 52, 52] },
-    margin: { top: 18, left: 8, right: 8, bottom: 8 }
+    margin: { top: 8, left: 8, right: 8, bottom: 8 }
   });
   doc.save(fileName);
 }
@@ -4720,7 +4722,7 @@ async function exportArchivedOperationPdf(ref) {
     const rowsSource = Array.isArray(snapshot?.session?.bearings)
       ? snapshot.session.bearings
       : (Array.isArray(archived?.session?.bearings) ? archived.session.bearings : []);
-    await exportRowsAsPdf(rowsSource, `radiogonio_releves_archive_${normalizedRef}.pdf`, `Archive ${normalizedRef} - Relevés`);
+    await exportRowsAsPdf(rowsSource, `radiogonio_releves_archive_${normalizedRef}.pdf`);
     notify(`📥 Archive ${normalizedRef} exportée en PDF ✓`);
   } catch (e) {
     console.warn('[CartoFLU] Export PDF archive impossible :', e);
