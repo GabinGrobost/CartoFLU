@@ -4307,9 +4307,15 @@ async function fetchFlightRadarTrack(registration = '', options = {}) {
   const baseUrl = (runtimeConfig.flightradar24ApiUrl || '').trim();
   if (!baseUrl) return null;
   const sep = baseUrl.includes('?') ? '&' : '?';
-  const url = all
-    ? `${baseUrl}${sep}all=1`
-    : `${baseUrl}${sep}registration=${encodeURIComponent(reg)}`;
+  let url;
+  if (all) {
+    const center = map?.getCenter ? map.getCenter() : { lat: 47, lng: 2 };
+    const zoom = typeof map?.getZoom === 'function' ? map.getZoom() : 7;
+    const radiusNm = Math.max(60, Math.min(320, Math.round(700 / Math.max(2, zoom))));
+    url = `${baseUrl}${sep}all=1&lat=${encodeURIComponent(center.lat)}&lon=${encodeURIComponent(center.lng)}&radius=${encodeURIComponent(radiusNm)}`;
+  } else {
+    url = `${baseUrl}${sep}registration=${encodeURIComponent(reg)}`;
+  }
   const resp = await fetch(url, { cache: 'no-store' });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const raw = await resp.json();

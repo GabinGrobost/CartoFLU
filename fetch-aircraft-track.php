@@ -152,12 +152,32 @@ function normalize_opensky_states(array $payload, int $limit = 300): array
 }
 
 if ($allAircraft) {
-    $snapshot = http_get_json('https://api.adsb.lol/v2/snapshot', 10);
+    $lat = isset($_GET['lat']) ? (float)$_GET['lat'] : 47.0;
+    $lon = isset($_GET['lon']) ? (float)$_GET['lon'] : 2.0;
+    $radiusNm = isset($_GET['radius']) ? (float)$_GET['radius'] : 250.0;
+    if (!is_finite($lat) || !is_finite($lon)) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Invalid lat/lon parameters'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+    $radiusNm = max(10.0, min(400.0, $radiusNm));
+
+    $snapshotUrl = sprintf('https://api.adsb.lol/v2/point/%s/%s/%s', rawurlencode((string)$lat), rawurlencode((string)$lon), rawurlencode((string)$radiusNm));
+    $snapshot = http_get_json($snapshotUrl, 10);
     $all = is_array($snapshot) ? normalize_all_aircraft($snapshot, 300) : [];
     $source = 'adsb.lol';
 
     if ($all === []) {
-        $opensky = http_get_json('https://opensky-network.org/api/states/all', 10);
+        $deltaLat = $radiusNm / 60.0;
+        $deltaLon = $radiusNm / max(10.0, (60.0 * cos(deg2rad($lat))));
+        $openskyUrl = sprintf(
+            'https://opensky-network.org/api/states/all?lamin=%s&lomin=%s&lamax=%s&lomax=%s',
+            rawurlencode((string)($lat - $deltaLat)),
+            rawurlencode((string)($lon - $deltaLon)),
+            rawurlencode((string)($lat + $deltaLat)),
+            rawurlencode((string)($lon + $deltaLon))
+        );
+        $opensky = http_get_json($openskyUrl, 10);
         $all = is_array($opensky) ? normalize_opensky_states($opensky, 300) : [];
         $source = 'opensky-network';
     }
@@ -178,7 +198,8 @@ if ($allAircraft) {
         'allAircraft' => $all,
         'source' => [
             'primary' => $source,
-            'mode' => 'snapshot'
+            'mode' => 'point-snapshot',
+            'query' => ['lat' => $lat, 'lon' => $lon, 'radiusNm' => $radiusNm]
         ],
         'updatedAt' => gmdate('c')
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
