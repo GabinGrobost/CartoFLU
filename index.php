@@ -4507,7 +4507,7 @@ function drawFlightRadarOverlay(flightData = {}, registration = '') {
   if (!radarLost && Number.isFinite(currentLat) && Number.isFinite(currentLon)) {
     if (estimatedAirCorridor.corridorSegment.length >= 2) {
       L.polyline(estimatedAirCorridor.corridorSegment, {
-        color: '#001f54',
+        color: '#ff0000',
         weight: 2.5,
         dashArray: '4 8',
         opacity: 0.75
@@ -4515,7 +4515,7 @@ function drawFlightRadarOverlay(flightData = {}, registration = '') {
     }
     if (estimatedAirCorridor.trajectory.length >= 2) {
       L.polyline(estimatedAirCorridor.trajectory, {
-        color: '#001f54',
+        color: '#ff0000',
         weight: 4,
         dashArray: '10 8',
         opacity: 0.95
