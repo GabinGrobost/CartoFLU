@@ -3844,7 +3844,21 @@ async function postInterconnectEnvelope(envelope, action = 'publish') {
       body: JSON.stringify({ action, envelope }),
       signal: AbortSignal.timeout(timeoutMs)
     });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    if (!resp.ok) {
+      let remoteDetail = '';
+      try {
+        const errData = await resp.json();
+        const parts = [
+          errData?.error ? String(errData.error) : '',
+          errData?.detail ? String(errData.detail) : '',
+          errData?.requestId ? `requestId=${String(errData.requestId)}` : ''
+        ].filter(Boolean);
+        remoteDetail = parts.join(' | ');
+      } catch (_) {
+        // ignore JSON parse failures for non-JSON error bodies
+      }
+      throw new Error(remoteDetail ? `HTTP ${resp.status} - ${remoteDetail}` : `HTTP ${resp.status}`);
+    }
     return true;
   } catch (e) {
     console.warn('[CartoFLU] Publication interconnexion impossible :', e);
