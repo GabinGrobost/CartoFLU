@@ -6,9 +6,9 @@ header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     echo json_encode([
-        'ok' => false,
-        'error' => 'Method not allowed. Use POST.',
-        'hint' => 'Send a JSON body to this local proxy endpoint with action=publish or action=list-active.',
+        'ok' => true,
+        'message' => 'Interconnect proxy is reachable.',
+        'hint' => 'Send a POST JSON body with action=publish or action=list-active.',
         'example' => [
             'action' => 'list-active',
             'envelope' => [
