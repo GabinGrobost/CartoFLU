@@ -1147,6 +1147,7 @@
 
   .leaflet-bottom {
     width: 100%;
+    background: rgba(255,255,255,.8);
   }
 
   /* MAP TOOLBAR */
